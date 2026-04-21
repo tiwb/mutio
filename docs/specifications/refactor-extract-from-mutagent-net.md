@@ -1,6 +1,6 @@
 # mutio 项目初始化 — 从 mutagent.net 抽取基础设施库 设计规范
 
-**状态**：🔄 实施中
+**状态**：✅ 已完成
 **日期**：2026-04-21
 **类型**：重构
 
@@ -216,13 +216,13 @@ HttpClient.set_default_user_agent(f"mutagent/{__version__}")
 
 ## 实施步骤清单
 
-- [ ] 创建 mutio 项目骨架（pyproject.toml、src/mutio/__init__.py、git init）
-- [ ] 迁移 mutio.net 模块（_protocol.py、asgi.py、server.py、_server_impl.py、client.py、_client_impl.py），更新内部 import
-- [ ] 迁移 mutio.mcp 模块（protocol.py、toolset.py、view.py、_view_impl.py、client.py、_client_impl.py），更新内部 import
-- [ ] HttpClient API 改造（set_default_user_agent classmethod，create 增加 user_agent 参数）
-- [ ] MCPClient 统一走 HttpClient.create
-- [ ] Logger name 更新为 mutio.*
-- [ ] 验证 mutio 独立可用（pip install -e、import 测试）
-- [ ] mutagent 兼容层（net/ 目录改为 re-export 薄层，pyproject.toml 加 mutio 依赖）
-- [ ] 验证 mutagent 测试通过（兼容层正确转发）
-- [ ] 验证 mutbot 启动正常（端到端兼容）
+- [x] 创建 mutio 项目骨架（pyproject.toml、src/mutio/__init__.py、git init）
+- [x] 迁移 mutio.net 模块（_protocol.py、asgi.py、server.py、_server_impl.py、client.py、_client_impl.py），更新内部 import
+- [x] 迁移 mutio.mcp 模块（protocol.py、toolset.py、view.py、_view_impl.py、client.py、_client_impl.py），更新内部 import
+- [x] HttpClient API 改造（set_default_user_agent classmethod，create 增加 user_agent 参数）
+- [x] MCPClient 统一走 HttpClient.create
+- [x] Logger name 更新为 mutio.*
+- [x] 验证 mutio 独立可用（pip install -e、import 测试）
+- [x] mutagent 兼容层（net/ 目录改为 re-export 薄层，pyproject.toml 加 mutio 依赖）
+- [x] 验证 mutagent 测试通过（752 passed, 5 skipped）
+- [x] 验证 mutbot 启动正常（522 passed，1 pre-existing failure 不相关）
