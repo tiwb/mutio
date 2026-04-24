@@ -16,5 +16,6 @@ from mutio.mcp.protocol import (  # noqa: F401
     PROTOCOL_VERSION,
 )
 from mutio.mcp.toolset import MCPToolSet  # noqa: F401
+from mutio.mcp.promptset import MCPPromptSet  # noqa: F401
 from mutio.mcp.view import MCPView  # noqa: F401
 from mutio.mcp.client import MCPClient, MCPError  # noqa: F401

@@ -12,12 +12,14 @@ import mutobj
 
 from mutio.net.server import Request, Response
 from mutio.mcp.toolset import MCPToolSet
+from mutio.mcp.promptset import MCPPromptSet
 from mutio.mcp.view import MCPView
 from mutio.mcp.protocol import (
     JsonRpcDispatcher,
     JsonRpcError,
     INVALID_PARAMS,
     PROTOCOL_VERSION,
+    PromptMessage,
     ServerCapabilities,
     ToolResult,
 )
@@ -208,6 +210,144 @@ def _infer_schema(fn: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# MCPPromptProvider — generation 检查 + 懒刷新
+# ---------------------------------------------------------------------------
+
+
+def _infer_prompt_arguments(fn: Any) -> list[dict[str, Any]]:
+    """从方法签名提取 MCP prompt arguments。
+
+    MCP 协议限制 prompt 参数只能是字符串。方法可以有默认值（→ required=False）。
+    兼容 ``from __future__ import annotations`` — 用 get_type_hints 解析字符串注解。
+    """
+    import typing
+
+    sig = inspect.signature(fn)
+    try:
+        hints = typing.get_type_hints(fn)
+    except Exception:
+        hints = {}
+    result: list[dict[str, Any]] = []
+    for name, param in sig.parameters.items():
+        if name in ("self", "cls"):
+            continue
+        if name in hints:
+            annotation = hints[name]
+            if annotation is not str:
+                raise TypeError(
+                    f"MCPPromptSet method parameter {name!r} must be str, got {annotation!r}"
+                )
+        required = param.default is inspect.Parameter.empty
+        result.append({"name": name, "required": required})
+    return result
+
+
+def _normalize_prompt_result(result: Any) -> list[PromptMessage]:
+    """归一化 prompt 方法返回值为 list[PromptMessage]。
+
+    支持三种形态：
+    - ``str`` → 单条 user text message
+    - ``PromptMessage`` → 单条
+    - ``list[PromptMessage]`` → 多条
+    """
+    if isinstance(result, str):
+        return [PromptMessage(role="user", content={"type": "text", "text": result})]
+    if isinstance(result, PromptMessage):
+        return [result]
+    if isinstance(result, list) and all(isinstance(m, PromptMessage) for m in result):
+        return result
+    raise TypeError(
+        f"Prompt method must return str | PromptMessage | list[PromptMessage], got {type(result)!r}"
+    )
+
+
+class MCPPromptProvider:
+    """generation 检查 + 懒刷新，桥接 Declaration 发现到 MCP prompt handler。"""
+
+    def __init__(self, target_view: type[MCPView] | None = None) -> None:
+        self._gen: int = -1
+        self._prompts: dict[str, tuple[MCPPromptSet, str]] = {}
+        self._target_view = target_view
+        self._target_path: str = ""
+        if target_view is not None:
+            self._target_path = target_view().path
+
+    def _match_view(self, promptset: MCPPromptSet) -> bool:
+        if self._target_view is None:
+            return True
+        ps_view = promptset.view
+        if ps_view is not None:
+            target_name = self._target_view.__name__
+            if isinstance(ps_view, tuple):
+                return any(v.__name__ == target_name for v in ps_view)
+            return ps_view.__name__ == target_name
+        ps_path = promptset.path
+        if not ps_path:
+            return True
+        if isinstance(ps_path, tuple):
+            return self._target_path in ps_path
+        return ps_path == self._target_path
+
+    def refresh(self) -> None:
+        gen = mutobj.get_registry_generation()
+        if gen != self._gen:
+            self._gen = gen
+            self._prompts = {}
+            for cls in mutobj.discover_subclasses(MCPPromptSet):
+                instance = cls()
+                if not self._match_view(instance):
+                    continue
+                prefix = instance.prefix
+                for name in dir(cls):
+                    if name.startswith("_"):
+                        continue
+                    if name in ("prefix", "view", "path"):
+                        continue
+                    attr = getattr(cls, name, None)
+                    if attr is not None and (inspect.isfunction(attr) or inspect.ismethod(attr)):
+                        if name in dir(MCPPromptSet):
+                            continue
+                        prompt_name = f"{prefix}{name}" if prefix else name
+                        self._prompts[prompt_name] = (instance, name)
+
+    def list_prompts(self) -> list[dict[str, Any]]:
+        """生成 prompts/list 返回条目：name / description / arguments。"""
+        self.refresh()
+        result: list[dict[str, Any]] = []
+        for prompt_name, (instance, method_name) in self._prompts.items():
+            method = getattr(instance, method_name)
+            doc = _get_declaration_doc(type(instance), method_name)
+            if doc is None:
+                doc = method.__doc__ or ""
+            arguments = _infer_prompt_arguments(method)
+            result.append({
+                "name": prompt_name,
+                "description": doc,
+                "arguments": arguments,
+            })
+        return result
+
+    async def call_prompt(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """执行 prompt 方法并返回 prompts/get 响应体。"""
+        self.refresh()
+        if name not in self._prompts:
+            raise JsonRpcError(INVALID_PARAMS, f"Unknown prompt: {name}")
+        instance, method_name = self._prompts[name]
+        method = getattr(instance, method_name)
+        raw = method(**args)
+        if inspect.iscoroutine(raw):
+            raw = await raw
+        messages = _normalize_prompt_result(raw)
+        doc = _get_declaration_doc(type(instance), method_name)
+        if doc is None:
+            doc = method.__doc__ or ""
+        response: dict[str, Any] = {"messages": [m.to_dict() for m in messages]}
+        if doc:
+            response["description"] = doc
+        return response
+
+
+# ---------------------------------------------------------------------------
 # MCPView Extension — 承载运行时状态
 # ---------------------------------------------------------------------------
 
@@ -215,6 +355,7 @@ def _infer_schema(fn: Any) -> dict[str, Any]:
 class _MCPViewExt(mutobj.Extension[MCPView]):
     """MCPView 的运行时状态。"""
     _tool_provider: MCPToolProvider | None = None
+    _prompt_provider: MCPPromptProvider | None = None
     _sessions: dict[str, _MCPSession] = mutobj.field(default_factory=dict)
     _dispatch: JsonRpcDispatcher | None = None
 
@@ -230,6 +371,7 @@ def _get_ext(view: MCPView) -> _MCPViewExt:
     ext = cast(_MCPViewExt, _MCPViewExt.get_or_create(view))
     if ext._tool_provider is None:
         ext._tool_provider = MCPToolProvider(target_view=type(view))
+        ext._prompt_provider = MCPPromptProvider(target_view=type(view))
         ext._dispatch = JsonRpcDispatcher()
         _setup_handlers(ext, view)
     return ext
@@ -239,13 +381,17 @@ def _setup_handlers(ext: _MCPViewExt, view: MCPView) -> None:
     """注册 MCP JSON-RPC 方法。"""
     assert ext._dispatch is not None
     assert ext._tool_provider is not None
+    assert ext._prompt_provider is not None
 
     tp = ext._tool_provider
+    pp = ext._prompt_provider
 
     async def _handle_initialize(params: dict[str, Any]) -> dict[str, Any]:
         tools = tp.list_tools()
+        prompts = pp.list_prompts()
         capabilities = ServerCapabilities(
             tools={"listChanged": False} if tools else None,
+            prompts={"listChanged": False} if prompts else None,
         )
         return {
             "protocolVersion": PROTOCOL_VERSION,
@@ -277,11 +423,23 @@ def _setup_handlers(ext: _MCPViewExt, view: MCPView) -> None:
             result = ToolResult.error(str(e))
         return result.to_dict()
 
+    async def _handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:
+        return {"prompts": pp.list_prompts()}
+
+    async def _handle_prompts_get(params: dict[str, Any]) -> dict[str, Any]:
+        prompt_name = params.get("name")
+        if not prompt_name:
+            raise JsonRpcError(INVALID_PARAMS, "Missing prompt name")
+        arguments = params.get("arguments", {}) or {}
+        return await pp.call_prompt(prompt_name, arguments)
+
     ext._dispatch.add_method("initialize", _handle_initialize)
     ext._dispatch.add_notification("notifications/initialized", _handle_initialized)
     ext._dispatch.add_method("ping", _handle_ping)
     ext._dispatch.add_method("tools/list", _handle_tools_list)
     ext._dispatch.add_method("tools/call", _handle_tools_call)
+    ext._dispatch.add_method("prompts/list", _handle_prompts_list)
+    ext._dispatch.add_method("prompts/get", _handle_prompts_get)
 
 
 # ---------------------------------------------------------------------------
