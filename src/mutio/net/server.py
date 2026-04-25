@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import socket as _socket
+from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
 import mutobj
@@ -36,17 +37,79 @@ class Request(mutobj.Declaration):
 
 class Response(mutobj.Declaration):
     """HTTP 响应。"""
-    status: int = 200
+    status_code: int = 200
     body: bytes = b""
     headers: dict[str, str] = mutobj.field(default_factory=dict)
 
 
 class StreamingResponse(mutobj.Declaration):
     """流式 HTTP 响应。"""
-    status: int = 200
+    status_code: int = 200
     headers: dict[str, str] = mutobj.field(default_factory=dict)
     body_iterator: AsyncIterator[bytes] | None = None
     media_type: str = "text/event-stream"
+
+
+class JSONResponse(Response):
+    """JSON 响应。content 经 render() 序列化为 bytes,自动设 content-type。
+
+    覆盖 render() 可替换序列化逻辑(如使用 orjson、自定义 datetime/Decimal 编码),
+    通过 ``@mutobj.impl(JSONResponse.render)`` 注入新实现。
+    """
+
+    def __init__(self, content: Any, status_code: int = 200) -> None: ...
+
+    def render(self, content: Any) -> bytes:
+        """将 content 序列化为 bytes。子类/扩展通过 @impl 覆盖。"""
+        ...
+
+
+class HTMLResponse(Response):
+    """HTML 响应。content-type = text/html; charset=utf-8。"""
+
+    def __init__(self, content: str | bytes, status_code: int = 200) -> None: ...
+
+
+class PlainTextResponse(Response):
+    """纯文本响应。content-type = text/plain; charset=utf-8。"""
+
+    def __init__(self, content: str | bytes, status_code: int = 200) -> None: ...
+
+
+class RedirectResponse(Response):
+    """重定向响应。
+
+    默认 307(临时,保 method+body,对齐 Starlette);永久重定向用 308;
+    需要降级为 GET 用 302/303(语义模糊,不推荐);永久且降级为 GET 用 301。
+    """
+
+    def __init__(
+        self,
+        url: str,
+        status_code: int = 307,
+        headers: dict[str, str] | None = None,
+    ) -> None: ...
+
+
+class FileResponse(Response):
+    """文件响应。读取磁盘内容,自动推断 content-type,设 cache-control。
+
+    media_type 为 None 时按扩展名推断,推不出来用 application/octet-stream。
+    cache_control 为 None 时:html 用 no-cache,其他用 public, max-age=86400。
+    filename 非 None 时设 Content-Disposition,默认 attachment(下载),
+    传 "inline" 可在浏览器内预览。
+    """
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        status_code: int = 200,
+        media_type: str | None = None,
+        cache_control: str | None = None,
+        filename: str | None = None,
+        content_disposition_type: str = "attachment",
+    ) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +183,7 @@ class Server(mutobj.Declaration):
 
         返回 None 表示放行，返回 Response 表示拦截。
         HTTP 场景：直接发送该 Response（如 302 重定向）。
-        WebSocket 场景：关闭连接（使用 Response.status 作为关闭码）。
+        WebSocket 场景：关闭连接（使用 Response.status_code 作为关闭码）。
 
         子类通过 @impl 覆盖以注入认证等逻辑。
         """
@@ -166,7 +229,7 @@ class View(mutobj.Declaration):
             path = "/hello/{name}"
 
             async def get(self, request: Request) -> Response:
-                return json_response({"hello": request.path_params["name"]})
+                return JSONResponse({"hello": request.path_params["name"]})
     """
     path: str | tuple[str, ...] = ""
 
@@ -192,29 +255,3 @@ class WebSocketView(mutobj.Declaration):
 class StaticView(View):
     """静态文件服务。directory 为文件系统绝对路径。"""
     directory: str = ""
-
-
-# ---------------------------------------------------------------------------
-# 辅助函数（公开 API）
-# ---------------------------------------------------------------------------
-
-
-def json_response(data: Any, status: int = 200) -> Response:
-    """创建 JSON 响应。"""
-    import json as _json
-    body = _json.dumps(data, ensure_ascii=False).encode("utf-8")
-    return Response(
-        status=status,
-        body=body,
-        headers={"content-type": "application/json; charset=utf-8"},
-    )
-
-
-def html_response(html: str, status: int = 200) -> Response:
-    """创建 HTML 响应。"""
-    body = html.encode("utf-8")
-    return Response(
-        status=status,
-        body=body,
-        headers={"content-type": "text/html; charset=utf-8"},
-    )

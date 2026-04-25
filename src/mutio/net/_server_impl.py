@@ -14,6 +14,11 @@ from urllib.parse import parse_qs, unquote
 import mutobj
 
 from mutio.net.server import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
     Request,
     Response,
     StreamingResponse,
@@ -26,6 +31,119 @@ from mutio.net.server import (
 )
 
 logger = logging.getLogger("mutio.net.server")
+
+
+# ---------------------------------------------------------------------------
+# Response 子类辅助 — 构造期使用,不走 @impl
+# ---------------------------------------------------------------------------
+
+
+def _encode_text(content: str | bytes) -> bytes:
+    """HTMLResponse / PlainTextResponse 的 body 编码。"""
+    return content.encode("utf-8") if isinstance(content, str) else content
+
+
+def _read_file_response(
+    path: str | Path,
+    *,
+    media_type: str | None,
+    cache_control: str | None,
+    filename: str | None,
+    content_disposition_type: str,
+) -> tuple[bytes, dict[str, str]]:
+    """FileResponse 的磁盘读取 + headers 构造。返回 (body, headers)。"""
+    file_path = Path(path)
+    if media_type is None:
+        guessed, _ = mimetypes.guess_type(str(file_path))
+        media_type = guessed or "application/octet-stream"
+
+    body = file_path.read_bytes()
+
+    if cache_control is None:
+        cache_control = "no-cache" if media_type.startswith("text/html") else "public, max-age=86400"
+
+    headers: dict[str, str] = {
+        "content-type": media_type,
+        "content-length": str(len(body)),
+        "cache-control": cache_control,
+    }
+    if filename is not None:
+        headers["content-disposition"] = f'{content_disposition_type}; filename="{filename}"'
+
+    return body, headers
+
+
+# ---------------------------------------------------------------------------
+# Response 子类 @impl — __init__ + JSONResponse.render
+# ---------------------------------------------------------------------------
+
+
+@mutobj.impl(JSONResponse.__init__)
+def _json_response_init(self: JSONResponse, content: Any, status_code: int = 200) -> None:
+    Response.__init__(
+        self,
+        status_code=status_code,
+        body=self.render(content),
+        headers={"content-type": "application/json; charset=utf-8"},
+    )
+
+
+@mutobj.impl(JSONResponse.render)
+def _json_response_render(self: JSONResponse, content: Any) -> bytes:
+    return json.dumps(content, ensure_ascii=False).encode("utf-8")
+
+
+@mutobj.impl(HTMLResponse.__init__)
+def _html_response_init(self: HTMLResponse, content: str | bytes, status_code: int = 200) -> None:
+    Response.__init__(
+        self,
+        status_code=status_code,
+        body=_encode_text(content),
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+
+
+@mutobj.impl(PlainTextResponse.__init__)
+def _plain_text_response_init(self: PlainTextResponse, content: str | bytes, status_code: int = 200) -> None:
+    Response.__init__(
+        self,
+        status_code=status_code,
+        body=_encode_text(content),
+        headers={"content-type": "text/plain; charset=utf-8"},
+    )
+
+
+@mutobj.impl(RedirectResponse.__init__)
+def _redirect_response_init(
+    self: RedirectResponse,
+    url: str,
+    status_code: int = 307,
+    headers: dict[str, str] | None = None,
+) -> None:
+    merged = dict(headers or {})
+    merged["location"] = url
+    Response.__init__(self, status_code=status_code, body=b"", headers=merged)
+
+
+@mutobj.impl(FileResponse.__init__)
+def _file_response_init(
+    self: FileResponse,
+    path: str | Path,
+    *,
+    status_code: int = 200,
+    media_type: str | None = None,
+    cache_control: str | None = None,
+    filename: str | None = None,
+    content_disposition_type: str = "attachment",
+) -> None:
+    body, headers = _read_file_response(
+        path,
+        media_type=media_type,
+        cache_control=cache_control,
+        filename=filename,
+        content_disposition_type=content_disposition_type,
+    )
+    Response.__init__(self, status_code=status_code, body=body, headers=headers)
 
 
 # ---------------------------------------------------------------------------
@@ -145,22 +263,22 @@ async def _ws_close(self: WebSocketConnection, code: int = 1000, reason: str = "
 
 @mutobj.impl(View.get)
 async def _view_get(self: View, request: Request) -> Response | StreamingResponse:
-    return Response(status=405)
+    return Response(status_code=405)
 
 
 @mutobj.impl(View.post)
 async def _view_post(self: View, request: Request) -> Response | StreamingResponse:
-    return Response(status=405)
+    return Response(status_code=405)
 
 
 @mutobj.impl(View.put)
 async def _view_put(self: View, request: Request) -> Response | StreamingResponse:
-    return Response(status=405)
+    return Response(status_code=405)
 
 
 @mutobj.impl(View.delete)
 async def _view_delete(self: View, request: Request) -> Response | StreamingResponse:
-    return Response(status=405)
+    return Response(status_code=405)
 
 
 @mutobj.impl(WebSocketView.connect)
@@ -171,7 +289,7 @@ async def _ws_view_connect(self: WebSocketView, ws: WebSocketConnection) -> None
 @mutobj.impl(StaticView.get)
 async def _static_view_get(self: StaticView, request: Request) -> Response | StreamingResponse:
     if not self.directory:
-        return Response(status=404, body=b"Not Found")
+        return Response(status_code=404, body=b"Not Found")
     directory = Path(self.directory)
     rel = request.path
     if not rel or rel == "/":
@@ -180,35 +298,16 @@ async def _static_view_get(self: StaticView, request: Request) -> Response | Str
     try:
         resolved = file_path.resolve()
         if not str(resolved).startswith(str(directory.resolve())):
-            return Response(status=403, body=b"Forbidden")
+            return Response(status_code=403, body=b"Forbidden")
     except (OSError, ValueError):
-        return Response(status=404, body=b"Not Found")
+        return Response(status_code=404, body=b"Not Found")
     if resolved.is_file():
-        return _serve_file(resolved)
+        return FileResponse(resolved)
     if "." not in resolved.name:
         index = directory / "index.html"
         if index.is_file():
-            return _serve_file(index)
-    return Response(status=404, body=b"Not Found")
-
-
-def _serve_file(file_path: Path) -> Response:
-    """读取文件并构造 Response。"""
-    content_type, _ = mimetypes.guess_type(str(file_path))
-    if content_type is None:
-        content_type = "application/octet-stream"
-
-    body = file_path.read_bytes()
-    headers: dict[str, str] = {
-        "content-type": content_type,
-        "content-length": str(len(body)),
-    }
-    if content_type.startswith("text/html"):
-        headers["cache-control"] = "no-cache"
-    else:
-        headers["cache-control"] = "public, max-age=86400"
-
-    return Response(status=200, body=body, headers=headers)
+            return FileResponse(index)
+    return Response(status_code=404, body=b"Not Found")
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +525,7 @@ async def _send_response(response: Response, send_fn: Any) -> None:
         raw_headers.append((b"content-length", str(len(response.body)).encode()))
     await send_fn({
         "type": "http.response.start",
-        "status": response.status,
+        "status": response.status_code,
         "headers": raw_headers,
     })
     await send_fn({"type": "http.response.body", "body": response.body})
@@ -441,7 +540,7 @@ async def _send_streaming_response(response: StreamingResponse, send_fn: Any) ->
     ]
     await send_fn({
         "type": "http.response.start",
-        "status": response.status,
+        "status": response.status_code,
         "headers": raw_headers,
     })
     if response.body_iterator is not None:
@@ -475,7 +574,7 @@ async def _server_route(
             if scope_type == "websocket":
                 await send({"type": "websocket.close", "code": 4404, "reason": "Not found"})
             elif scope_type == "http":
-                await _send_response(Response(status=404), send)
+                await _send_response(Response(status_code=404), send)
             return
 
     # --- WebSocket ---
@@ -485,7 +584,7 @@ async def _server_route(
             # before_route 钩子
             intercept = await self.before_route(scope, path)
             if intercept is not None:
-                await send({"type": "websocket.close", "code": intercept.status, "reason": "Unauthorized"})
+                await send({"type": "websocket.close", "code": intercept.status_code, "reason": "Unauthorized"})
                 return
             ws_view, params = result
             ws_conn = _make_ws_connection(scope, receive, send, params)
@@ -519,7 +618,7 @@ async def _server_route(
             if qs_str:
                 location = f"{location}?{qs_str}"
             await _send_response(
-                Response(status=307, headers={"location": location}),
+                Response(status_code=307, headers={"location": location}),
                 send,
             )
             return
@@ -529,14 +628,13 @@ async def _server_route(
             method = scope.get("method", "GET").lower()
             handler = getattr(view, method, None)
             if handler is None:
-                resp: Response | StreamingResponse = Response(status=405)
+                resp: Response | StreamingResponse = Response(status_code=405)
             else:
                 try:
                     resp = await handler(request)
                 except Exception:
                     logger.exception("HTTP handler error: %s %s", scope.get("method"), path)
-                    from mutio.net.server import json_response
-                    resp = json_response({"error": "Internal Server Error"}, status=500)
+                    resp = JSONResponse({"error": "Internal Server Error"}, status_code=500)
             if isinstance(resp, StreamingResponse):
                 await _send_streaming_response(resp, send)
             else:
@@ -559,17 +657,17 @@ async def _server_route(
                 except (OSError, ValueError):
                     continue
                 if resolved.is_file():
-                    resp = _serve_file(resolved)
+                    resp = FileResponse(resolved)
                     await _send_response(resp, send)
                     return
                 if "." not in resolved.name:
                     index = directory / "index.html"
                     if index.is_file():
-                        resp = _serve_file(index)
+                        resp = FileResponse(index)
                         await _send_response(resp, send)
                         return
 
-        resp = Response(status=404, body=b"Not Found")
+        resp = Response(status_code=404, body=b"Not Found")
         await _send_response(resp, send)
         return
 

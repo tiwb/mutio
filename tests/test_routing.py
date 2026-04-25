@@ -96,14 +96,14 @@ class _ProbeView(View):
     path = "/probe"
 
     async def get(self, request: Request) -> Response:
-        return Response(status=200, body=b"hit", headers={"x-marker": "probe"})
+        return Response(status_code=200, body=b"hit", headers={"x-marker": "probe"})
 
 
 class _ProbeSlashView(View):
     path = "/probe-slash/"
 
     async def get(self, request: Request) -> Response:
-        return Response(status=200, body=b"hit-slash", headers={"x-marker": "probe-slash"})
+        return Response(status_code=200, body=b"hit-slash", headers={"x-marker": "probe-slash"})
 
 
 class TestTrailingSlashNormalization:
@@ -208,14 +208,14 @@ class _MultiPathList(View):
     async def get(self, request: Request) -> Response:
         # 用闭包外的类变量,但更直接:实例属性
         self.hits = getattr(self, "hits", 0) + 1
-        return Response(status=200, body=str(self.hits).encode())
+        return Response(status_code=200, body=str(self.hits).encode())
 
 
 class _MultiPathTuple(View):
     path = ("/m-tuple-x", "/m-tuple-y")
 
     async def get(self, request: Request) -> Response:
-        return Response(status=200, body=request.path.encode())
+        return Response(status_code=200, body=request.path.encode())
 
 
 class _WSMultiPath(WebSocketView):
@@ -277,7 +277,7 @@ class _AuthLike(View):
     path = ("/auth-like", "/auth-like/")
 
     async def get(self, request: Request) -> Response:
-        return Response(status=302, headers={"location": "/auth-like/login"})
+        return Response(status_code=302, headers={"location": "/auth-like/login"})
 
 
 class TestMultiPathBypassesRedirect:

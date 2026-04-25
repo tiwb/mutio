@@ -459,11 +459,11 @@ async def _send_json_response(
         headers.update(extra_headers)
     body = json.dumps(data).encode()
     headers["content-length"] = str(len(body))
-    return Response(status=status, body=body, headers=headers)
+    return Response(status_code=status, body=body, headers=headers)
 
 
 async def _send_empty_response(status: int) -> Response:
-    return Response(status=status, headers={"content-length": "0"})
+    return Response(status_code=status, headers={"content-length": "0"})
 
 
 @mutobj.impl(MCPView.post)
@@ -523,7 +523,7 @@ async def _mcp_view_post(self: MCPView, request: Request) -> Response:
         }
         headers.update(extra_headers)
         headers["content-length"] = str(len(sse_data))
-        return Response(status=200, body=sse_data, headers=headers)
+        return Response(status_code=200, body=sse_data, headers=headers)
     else:
         return await _send_json_response(200, result_data, extra_headers)
 
