@@ -60,7 +60,7 @@ class _FakeView:
 def _make_provider_for_path(path: str) -> MCPPromptProvider:
     # 构造一个 provider，手动注入匹配目标 path，绕开 MCPView 实例依赖
     provider = MCPPromptProvider(target_view=None)
-    provider._target_path = path
+    provider._target_paths = (path,)
     provider._target_view = type("T", (), {"__name__": f"T{path}"})  # type: ignore[assignment]
     return provider
 

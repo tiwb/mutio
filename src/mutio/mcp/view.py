@@ -11,7 +11,7 @@ class MCPView(View):
     继承 View，被 Server.route 统一发现和分发。
     impl 中包含 JSON-RPC 分发、session 管理、MCPToolProvider 逻辑。
     """
-    path: str = ""
+    path: str | tuple[str, ...] = ""
     name: str = ""
     version: str = ""
     instructions: str | None = None

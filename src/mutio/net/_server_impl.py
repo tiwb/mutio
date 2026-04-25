@@ -291,26 +291,38 @@ def _discover_routes(ext: _ServerExt, server: Server) -> None:
         # StaticView 特殊处理 — 记录静态目录
         if issubclass(view_cls, StaticView):
             view = view_cls()
-            if view.path and view.directory:
-                ext._static_dirs.append((view.path.rstrip("/"), Path(view.directory)))
+            sv_path = view.path if isinstance(view.path, str) else (view.path[0] if view.path else "")
+            if sv_path and view.directory:
+                ext._static_dirs.append((sv_path.rstrip("/"), Path(view.directory)))
             continue
         view = view_cls()
-        if view.path:
-            ext._routes.append(_Route(view.path, view, is_ws=False))
+        for p in _iter_paths(view.path):
+            ext._routes.append(_Route(p, view, is_ws=False))
 
     for ws_cls in mutobj.discover_subclasses(WebSocketView):
         # 检查是否在 views 限制范围内
         if not _is_view_allowed(ext, ws_cls):
             continue
         ws_view = ws_cls()
-        if ws_view.path:
-            ext._routes.append(_Route(ws_view.path, ws_view, is_ws=True))
+        for p in _iter_paths(ws_view.path):
+            ext._routes.append(_Route(p, ws_view, is_ws=True))
+
+
+def _iter_paths(path: str | tuple[str, ...]) -> list[str]:
+    """View.path 归一化为 path 列表。空字符串/空 tuple 返回空列表(不注册)。
+
+    注意 mutobj Declaration 不接受 list 作为类属性默认值,所以多绑定只支持 tuple。
+    运行时仍兼容 list(若用户显式构造实例时传入)。
+    """
+    if isinstance(path, str):
+        return [path] if path else []
+    return [p for p in path if p]
 
 
 def _match_route(
     ext: _ServerExt, path: str, *, ws: bool = False,
 ) -> tuple[Any, dict[str, str]] | None:
-    """路径匹配。"""
+    """路径精确匹配。"""
     for route in ext._routes:
         if route.is_ws != ws:
             continue
@@ -321,6 +333,30 @@ def _match_route(
                 for name, val in zip(route.param_names, m.groups())
             }
             return route.handler, params
+    return None
+
+
+def _match_route_with_slash_fallback(
+    ext: _ServerExt, path: str, *, ws: bool = False,
+) -> tuple[Any, dict[str, str]] | str | None:
+    """先精确匹配,未命中则尝试加/去 trailing slash。
+
+    返回值:
+    - (handler, params) — 精确命中
+    - normalized_path: str — 加/去 slash 后命中,调用方应 307 重定向到 normalized_path
+    - None — 仍未命中
+    """
+    direct = _match_route(ext, path, ws=ws)
+    if direct is not None:
+        return direct
+    if not path or path == "/":
+        return None
+    if path.endswith("/"):
+        candidate = path[:-1]
+    else:
+        candidate = path + "/"
+    if _match_route(ext, candidate, ws=ws) is not None:
+        return candidate
     return None
 
 
@@ -471,9 +507,24 @@ async def _server_route(
             else:
                 await _send_response(intercept, send)
             return
-        result = _match_route(ext, path, ws=False)
-        if result:
-            view, params = result
+        if self.redirect_slashes:
+            match_result = _match_route_with_slash_fallback(ext, path, ws=False)
+        else:
+            match_result = _match_route(ext, path, ws=False)
+        if isinstance(match_result, str):
+            # trailing-slash 规范化:307 重定向到 normalized_path
+            qs = scope.get("query_string", b"")
+            qs_str = qs.decode("latin-1") if isinstance(qs, bytes) else qs
+            location = (bp + match_result) if bp else match_result
+            if qs_str:
+                location = f"{location}?{qs_str}"
+            await _send_response(
+                Response(status=307, headers={"location": location}),
+                send,
+            )
+            return
+        if match_result:
+            view, params = match_result
             request = _make_request(scope, receive, params)
             method = scope.get("method", "GET").lower()
             handler = getattr(view, method, None)

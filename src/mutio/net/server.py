@@ -106,6 +106,8 @@ class Server(mutobj.Declaration):
     host: str = "127.0.0.1"
     port: int = 0
     base_path: str = ""
+    redirect_slashes: bool = True
+    """精确路径未命中时,自动尝试加/去 trailing slash 并 307 重定向(对齐 Starlette/FastAPI 默认)。"""
     # 不带注解，作为普通类变量，避免被 DeclarationMeta 转换为 AttributeDescriptor
     views = None  # type: tuple[type[View], ...] | None
 
@@ -148,8 +150,15 @@ class Server(mutobj.Declaration):
 class View(mutobj.Declaration):
     """HTTP 路由视图基类。
 
-    子类设置 ``path`` 并覆盖对应 HTTP method。path 支持路径参数，如 ``/api/{id}``，
+    子类设置 ``path`` 并覆盖对应 HTTP method。path 支持路径参数,如 ``/api/{id}``,
     匹配值通过 ``request.path_params["id"]`` 获取。Server 自动发现所有 View 子类。
+
+    ``path`` 可以是字符串或字符串元组。设为元组时,多条路径共享同一个 view 实例
+    (同一组 method handler、同一份状态),适合「两形式 URL 直接命中避免 307 跳转」
+    的场景::
+
+        class AuthRedirect(View):
+            path = ("/auth", "/auth/")   # 必须是 tuple,不能是 list(mutobj 限制)
 
     示例::
 
@@ -159,7 +168,7 @@ class View(mutobj.Declaration):
             async def get(self, request: Request) -> Response:
                 return json_response({"hello": request.path_params["name"]})
     """
-    path: str = ""
+    path: str | tuple[str, ...] = ""
 
     async def get(self, request: Request) -> Response | StreamingResponse: ...
     async def post(self, request: Request) -> Response | StreamingResponse: ...
@@ -170,10 +179,10 @@ class View(mutobj.Declaration):
 class WebSocketView(mutobj.Declaration):
     """WebSocket 路由视图基类。
 
-    子类设置 ``path`` 并覆盖 ``connect``。path 格式同 View。
+    子类设置 ``path`` 并覆盖 ``connect``。path 格式同 View(支持单值 str 或多绑定 tuple)。
     ``connect`` 返回即断开连接。
     """
-    path: str = ""
+    path: str | tuple[str, ...] = ""
 
     async def connect(self, ws: WebSocketConnection) -> None:
         """WebSocket 生命周期入口。方法返回即断开。"""

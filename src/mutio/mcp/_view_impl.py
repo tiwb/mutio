@@ -41,9 +41,11 @@ class MCPToolProvider:
         self._tools: dict[str, tuple[MCPToolSet, str]] = {}
         self._target_view = target_view
         # 缓存 target_view 的 path（从实例获取，避免 AttributeDescriptor）
-        self._target_path: str = ""
+        # MCPView.path 可能是 str 或 tuple,统一归一化为 tuple 简化比较
+        self._target_paths: tuple[str, ...] = ()
         if target_view is not None:
-            self._target_path = target_view().path
+            tv_path = target_view().path
+            self._target_paths = (tv_path,) if isinstance(tv_path, str) else tuple(tv_path)
 
     def _match_view(self, toolset: MCPToolSet) -> bool:
         """检查 toolset 是否属于当前 view。
@@ -68,8 +70,8 @@ class MCPToolProvider:
             # 未指定 view 和 path 的 toolset 匹配所有 view
             return True
         if isinstance(toolset_path, tuple):
-            return self._target_path in toolset_path
-        return toolset_path == self._target_path
+            return any(p in toolset_path for p in self._target_paths)
+        return toolset_path in self._target_paths
 
     def refresh(self) -> None:
         gen = mutobj.get_registry_generation()
@@ -268,9 +270,10 @@ class MCPPromptProvider:
         self._gen: int = -1
         self._prompts: dict[str, tuple[MCPPromptSet, str]] = {}
         self._target_view = target_view
-        self._target_path: str = ""
+        self._target_paths: tuple[str, ...] = ()
         if target_view is not None:
-            self._target_path = target_view().path
+            tv_path = target_view().path
+            self._target_paths = (tv_path,) if isinstance(tv_path, str) else tuple(tv_path)
 
     def _match_view(self, promptset: MCPPromptSet) -> bool:
         if self._target_view is None:
@@ -285,8 +288,8 @@ class MCPPromptProvider:
         if not ps_path:
             return True
         if isinstance(ps_path, tuple):
-            return self._target_path in ps_path
-        return ps_path == self._target_path
+            return any(p in ps_path for p in self._target_paths)
+        return ps_path in self._target_paths
 
     def refresh(self) -> None:
         gen = mutobj.get_registry_generation()
