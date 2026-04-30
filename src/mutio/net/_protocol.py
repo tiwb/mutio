@@ -11,6 +11,7 @@ from urllib.parse import unquote
 import h11
 import wsproto
 import wsproto.events as ws_events
+from mutio.net.server import WebSocketDisconnect, _is_expected_disconnect_error
 
 logger = logging.getLogger("mutio.net.protocol")
 access_logger = logging.getLogger("mutio.net.access")
@@ -604,8 +605,7 @@ class WSProtocol(asyncio.Protocol):
 
     def connection_lost(self, exc: Exception | None) -> None:
         self.server_state["connections"].discard(self)
-        self._closed = True
-        self.queue.put_nowait({"type": "websocket.disconnect", "code": 1006})
+        self._emit_disconnect(1006)
 
         if self.task and not self.task.done():
             self.task.cancel()
@@ -664,8 +664,22 @@ class WSProtocol(asyncio.Protocol):
                 self.transport.write(data)
             except Exception:
                 pass
+        self._emit_disconnect(code)
+
+    def _emit_disconnect(self, code: int) -> None:
+        if self._closed:
+            return
         self._closed = True
         self.queue.put_nowait({"type": "websocket.disconnect", "code": code})
+
+    def _write_or_disconnect(self, data: bytes, *, code: int = 1006) -> None:
+        try:
+            self.transport.write(data)
+        except Exception as exc:
+            if _is_expected_disconnect_error(exc):
+                self._emit_disconnect(code)
+                raise WebSocketDisconnect(code) from exc
+            raise
 
     def _enqueue(self, message: dict[str, Any]) -> None:
         self.queue.put_nowait(message)
@@ -679,9 +693,16 @@ class WSProtocol(asyncio.Protocol):
             await self.app(self.scope, self.receive, self.send)
         except asyncio.CancelledError:
             pass
-        except Exception:
-            logger.exception("ASGI app raised exception for WebSocket %s",
-                             self.scope["path"])
+        except WebSocketDisconnect as exc:
+            logger.debug("WebSocket %s disconnected (code=%s)",
+                         self.scope["path"], exc.code)
+        except Exception as exc:
+            if _is_expected_disconnect_error(exc):
+                logger.debug("WebSocket %s disconnected: %s",
+                             self.scope["path"], exc)
+            else:
+                logger.exception("ASGI app raised exception for WebSocket %s",
+                                 self.scope["path"])
         finally:
             if not self._closed:
                 self.transport.close()
@@ -722,7 +743,7 @@ class WSProtocol(asyncio.Protocol):
             subprotocol=subprotocol,
             extra_headers=extra_headers,
         ))
-        self.transport.write(data)
+        self._write_or_disconnect(data)
         self._handshake_complete = True
 
     async def _send_data(self, message: dict[str, Any]) -> None:
@@ -732,7 +753,7 @@ class WSProtocol(asyncio.Protocol):
             data = self.ws.send(ws_events.BytesMessage(data=message["bytes"]))
         else:
             return
-        self.transport.write(data)
+        self._write_or_disconnect(data)
 
     async def _send_close(self, message: dict[str, Any]) -> None:
         code = message.get("code", 1000)
@@ -741,7 +762,9 @@ class WSProtocol(asyncio.Protocol):
             self._close_sent = True
             try:
                 data = self.ws.send(ws_events.CloseConnection(code=code, reason=reason))
-                self.transport.write(data)
+                self._write_or_disconnect(data)
+            except WebSocketDisconnect:
+                pass
             except Exception:
                 pass
         self.transport.close()
@@ -754,13 +777,13 @@ class WSProtocol(asyncio.Protocol):
             headers=headers,
             has_body=True,
         ))
-        self.transport.write(data)
+        self._write_or_disconnect(data)
 
     async def _send_http_reject_body(self, message: dict[str, Any]) -> None:
         body = message.get("body", b"")
         if body:
             data = self.ws.send(ws_events.RejectData(data=body))
-            self.transport.write(data)
+            self._write_or_disconnect(data)
         if not message.get("more_body", False):
             self.transport.close()
 

@@ -11,8 +11,34 @@ import sys
 from typing import Any
 
 from mutio.net._protocol import HTTPProtocol
+from mutio.net.server import _is_expected_disconnect_error
 
 logger = logging.getLogger("mutio.net.server")
+
+
+def _install_asyncio_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
+    """为 mutio server 安装最小 asyncio 异常兜底。"""
+    if getattr(loop, "_mutio_exception_handler_installed", False):
+        return
+
+    previous_handler = loop.get_exception_handler()
+
+    def _asyncio_exception_handler(
+        current_loop: asyncio.AbstractEventLoop,
+        context: dict[str, Any],
+    ) -> None:
+        exception = context.get("exception")
+        message = context.get("message", "Unhandled exception in asyncio callback")
+        if exception and _is_expected_disconnect_error(exception):
+            logger.debug("%s: %s", message, exception)
+            return
+        if previous_handler is not None:
+            previous_handler(current_loop, context)
+            return
+        current_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_asyncio_exception_handler)
+    setattr(loop, "_mutio_exception_handler_installed", True)
 
 
 class Server:
@@ -72,6 +98,7 @@ class Server:
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
+            _install_asyncio_exception_handler(loop)
             loop.run_until_complete(self._serve(
                 host=host, port=port, sockets=sockets, on_startup=on_startup,
             ))
@@ -167,6 +194,7 @@ class Server:
     ) -> None:
         """创建 TCP server 并开始监听。"""
         loop = asyncio.get_running_loop()
+        _install_asyncio_exception_handler(loop)
 
         def _create_protocol() -> HTTPProtocol:
             return HTTPProtocol(
