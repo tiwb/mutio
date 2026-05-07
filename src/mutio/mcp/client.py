@@ -26,6 +26,7 @@ class MCPClient(mutobj.Declaration):
     timeout: float = 30.0
     server_info: dict[str, Any] = mutobj.field(default_factory=dict)
     server_capabilities: dict[str, Any] = mutobj.field(default_factory=dict)
+    server_instructions: str = ""
 
     async def connect(self) -> None:
         """连接并完成 MCP initialize 握手。"""

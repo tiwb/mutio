@@ -127,6 +127,7 @@ async def _initialize(client: MCPClient) -> None:
 
     client.server_info = result.get("serverInfo", {})
     client.server_capabilities = result.get("capabilities", {})
+    client.server_instructions = result.get("instructions", "") or ""
     logger.info("MCP initialized: %s v%s (protocol %s)",
                 client.server_info.get("name"),
                 client.server_info.get("version"),
