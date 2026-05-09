@@ -396,9 +396,18 @@ def _setup_handlers(ext: _MCPViewExt, view: MCPView) -> None:
             tools={"listChanged": False} if tools else None,
             prompts={"listChanged": False} if prompts else None,
         )
+        caps_dict = capabilities.to_dict()
+        # 子类可以宣告 vendor 扩展 capability（顶层合并，不递归）
+        try:
+            extra = view.extra_capabilities() or {}
+        except Exception:
+            logger.exception("extra_capabilities() raised")
+            extra = {}
+        if extra:
+            caps_dict.update(extra)
         return {
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": capabilities.to_dict(),
+            "capabilities": caps_dict,
             "serverInfo": {"name": view.name, "version": view.version},
             **({"instructions": view.instructions} if view.instructions else {}),
         }
@@ -443,6 +452,12 @@ def _setup_handlers(ext: _MCPViewExt, view: MCPView) -> None:
     ext._dispatch.add_method("tools/call", _handle_tools_call)
     ext._dispatch.add_method("prompts/list", _handle_prompts_list)
     ext._dispatch.add_method("prompts/get", _handle_prompts_get)
+
+    # 子类可注册 vendor 扩展方法（如 pysandbox/namespaces.*）
+    try:
+        view.register_extra_methods(ext._dispatch)
+    except Exception:
+        logger.exception("register_extra_methods() raised")
 
 
 # ---------------------------------------------------------------------------
@@ -537,3 +552,18 @@ async def _mcp_view_delete(self: MCPView, request: Request) -> Response:
         return await _send_empty_response(200)
     else:
         return await _send_empty_response(404)
+
+
+# ---------------------------------------------------------------------------
+# MCPView 扩展钩子默认实现 — 子类可覆盖
+# ---------------------------------------------------------------------------
+
+
+@mutobj.impl(MCPView.extra_capabilities)
+def _mcp_view_extra_capabilities(self: MCPView) -> dict[str, Any]:
+    return {}
+
+
+@mutobj.impl(MCPView.register_extra_methods)
+def _mcp_view_register_extra_methods(self: MCPView, dispatch: Any) -> None:
+    return None

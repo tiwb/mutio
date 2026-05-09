@@ -109,6 +109,15 @@ async def _ping(self: MCPClient) -> None:
     await _request(self, "ping")
 
 
+@mutobj.impl(MCPClient.request)
+async def _request_method(
+    self: MCPClient,
+    method: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    return await _request(self, method, params)
+
+
 # ---------------------------------------------------------------------------
 # MCPClient 内部方法
 # ---------------------------------------------------------------------------

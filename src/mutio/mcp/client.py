@@ -44,6 +44,15 @@ class MCPClient(mutobj.Declaration):
         """调用 tool。返回 ``{"content": [...], "isError": bool}``。"""
         ...
 
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        """通用 JSON-RPC 请求 — 直接转发到 server，返回 ``result`` 字段。
+
+        服务端宣告自定义扩展方法时（如 ``pysandbox/namespaces.list``），
+        client 通过本入口调用，不必在 ``MCPClient`` 上为每个扩展方法
+        加专门的方法。错误会以 :class:`MCPError` 形式抛出。
+        """
+        ...
+
     async def list_resources(self) -> list[dict[str, Any]]:
         """获取 server 可用 resources。"""
         ...
