@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mutio"
-version = "0.7.999"
+version = "0.9.999"
 description = "I/O infrastructure toolkit for the mutobj ecosystem"
 readme = "README.md"
 license = "MIT"
@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "mutobj~=0.7.0",
+    "mutobj~=0.9.0",
     "httpx[socks]>=0.27",
     "h11>=0.14.0",
     "wsproto>=1.2.0",
