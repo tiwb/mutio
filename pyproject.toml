@@ -48,6 +48,9 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
 
+[tool.uv.sources]
+mutobj = { path = "../mutobj", editable = true }
+
 [tool.pyright]
 pythonVersion = "3.11"
 include = ["src"]
