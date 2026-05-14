@@ -23,6 +23,7 @@ from mutio.mcp.protocol import (
     ServerCapabilities,
     ToolResult,
 )
+from mutio.mcp._schema import function_to_mcp_input_schema, function_to_mcp_description
 from mutio.net._protocol import format_sse
 
 logger = logging.getLogger("mutio.mcp")
@@ -102,14 +103,15 @@ class MCPToolProvider:
         result: list[dict[str, Any]] = []
         for tool_name, (instance, method_name) in self._tools.items():
             method = getattr(instance, method_name)
-            schema = _infer_schema(method)
             # 优先使用声明的 docstring，避免被 @impl 覆盖
             doc = _get_declaration_doc(type(instance), method_name)
             if doc is None:
-                doc = method.__doc__ or ""
+                doc = method.__doc__
+            schema = function_to_mcp_input_schema(method, doc=doc)
+            description = function_to_mcp_description(method, doc=doc)
             result.append({
                 "name": tool_name,
-                "description": doc,
+                "description": description,
                 "inputSchema": schema,
             })
         return result
@@ -145,70 +147,6 @@ def _get_declaration_doc(cls: type, method_name: str) -> str | None:
     except ImportError:
         pass
     return None
-
-
-def _infer_schema(fn: Any) -> dict[str, Any]:
-    """从函数签名推断 JSON Schema（简易版）。"""
-    import typing
-
-    sig = inspect.signature(fn)
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-
-    type_map = {
-        str: "string",
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-    }
-
-    def _get_json_type(annotation: Any) -> dict[str, Any]:
-        """将 Python 类型注解转换为 JSON Schema 类型。"""
-        # 基本类型
-        if annotation in type_map:
-            return {"type": type_map[annotation]}
-
-        # 处理 typing 模块的泛型类型
-        origin = typing.get_origin(annotation)
-        args = typing.get_args(annotation)
-
-        # List[T] -> {"type": "array", "items": ...}
-        if origin is list:
-            if args:
-                return {"type": "array", "items": _get_json_type(args[0])}
-            return {"type": "array"}
-
-        # Dict[K, V] -> {"type": "object"}
-        if origin is dict:
-            return {"type": "object"}
-
-        # Optional[T] = Union[T, None]
-        if origin is typing.Union:
-            # 过滤掉 NoneType
-            non_none_args = [a for a in args if a is not type(None)]
-            if len(non_none_args) == 1:
-                return _get_json_type(non_none_args[0])
-            # 多个类型的 Union，降级为 object
-            return {"type": "object"}
-
-        # 未知类型默认为 string
-        return {"type": "string"}
-
-    for name, param in sig.parameters.items():
-        if name in ("self", "cls"):
-            continue
-        annotation = param.annotation
-        if annotation is inspect.Parameter.empty:
-            properties[name] = {"type": "string"}
-        else:
-            properties[name] = _get_json_type(annotation)
-        if param.default is inspect.Parameter.empty:
-            required.append(name)
-
-    schema: dict[str, Any] = {"type": "object", "properties": properties}
-    if required:
-        schema["required"] = required
-    return schema
 
 
 # ---------------------------------------------------------------------------
