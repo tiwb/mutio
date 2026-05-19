@@ -29,6 +29,7 @@ from mutio.net.server import (
     WebSocketView,
     StaticView,
 )
+from mutio.net.asgi import ASGIServer
 
 logger = logging.getLogger("mutio.net.server")
 
@@ -168,7 +169,7 @@ class StreamingResponseExt(mutobj.Extension[StreamingResponse]):
 
 
 # ---------------------------------------------------------------------------
-# Extension for Server — 承载 _asgi.Server 实例 + 路由状态
+# Extension for Server — 承载 ASGIServer 实例 + 路由状态
 # ---------------------------------------------------------------------------
 
 
@@ -716,8 +717,6 @@ def server_run(
     *,
     listen: Sequence[str | _socket.socket] | None = None,
 ) -> None:
-    from mutio.net.asgi import Server as _ASGIServer
-
     sockets, host, port = _parse_listen_arg(listen, self)
 
     # 包装 ASGI app：lifespan → on_startup/on_shutdown，其余 → route
@@ -727,7 +726,7 @@ def server_run(
         else:
             await self.route(scope, receive, send)
 
-    asgi_server = _ASGIServer(_asgi_app)
+    asgi_server = ASGIServer(_asgi_app)
     ext = ServerExt.get_or_create(self)
     ext.asgi_server = asgi_server
 
@@ -745,8 +744,6 @@ async def server_start(
     *,
     listen: Sequence[str | _socket.socket] | None = None,
 ) -> None:
-    from mutio.net.asgi import Server as _ASGIServer
-
     sockets, host, port = _parse_listen_arg(listen, self)
 
     async def _asgi_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
@@ -755,22 +752,16 @@ async def server_start(
         else:
             await self.route(scope, receive, send)
 
-    asgi_server = _ASGIServer(_asgi_app)
+    asgi_server = ASGIServer(_asgi_app)
     ext = ServerExt.get_or_create(self)
     ext.asgi_server = asgi_server
 
-    # lifespan startup
-    await asgi_server.lifespan_startup()
-    if asgi_server.lifespan_startup_failed:
-        raise RuntimeError("Server lifespan startup failed")
-
-    # TCP startup
     if sockets:
-        await asgi_server.startup(sockets=sockets)
+        await asgi_server.start(sockets=sockets)
     elif host is not None and port is not None:
-        await asgi_server.startup(host=host, port=port)
+        await asgi_server.start(host=host, port=port)
     else:
-        await asgi_server.startup(host=self.host, port=self.port)
+        await asgi_server.start(host=self.host, port=self.port)
 
 
 @mutobj.impl(Server.stop)
@@ -778,7 +769,6 @@ async def server_stop(self: Server) -> None:
     ext = ServerExt.get_or_create(self)
     if ext.asgi_server is not None:
         await ext.asgi_server.shutdown()
-        await ext.asgi_server._lifespan_shutdown()
 
 
 # ---------------------------------------------------------------------------

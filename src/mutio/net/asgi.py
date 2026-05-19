@@ -1,87 +1,31 @@
-"""ASGI Server — asyncio 事件循环 + TCP 服务器管理 + lifespan 协议。"""
+"""ASGI 传输层 Declaration — ASGIServer。"""
 
 from __future__ import annotations
 
-import asyncio
-import logging
-import os
-import signal
 import socket as _socket
-import sys
 from typing import Any
 
-from mutio.net._protocol import HTTPProtocol
-from mutio.net.server import is_expected_disconnect_error
-
-logger = logging.getLogger("mutio.net.server")
+import mutobj
 
 
-def _install_asyncio_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
-    """为 mutio server 安装最小 asyncio 异常兜底。"""
-    if getattr(loop, "_mutio_exception_handler_installed", False):
-        return
-
-    previous_handler = loop.get_exception_handler()
-
-    def _asyncio_exception_handler(
-        current_loop: asyncio.AbstractEventLoop,
-        context: dict[str, Any],
-    ) -> None:
-        exception = context.get("exception")
-        message = context.get("message", "Unhandled exception in asyncio callback")
-        if exception and is_expected_disconnect_error(exception):
-            logger.debug("%s: %s", message, exception)
-            return
-        if previous_handler is not None:
-            previous_handler(current_loop, context)
-            return
-        current_loop.default_exception_handler(context)
-
-    loop.set_exception_handler(_asyncio_exception_handler)
-    setattr(loop, "_mutio_exception_handler_installed", True)
-
-
-class Server:
-    """轻量 ASGI server。
+class ASGIServer(mutobj.Declaration):
+    """轻量 ASGI 传输层 server。
 
     用法::
 
-        server = Server(app)
+        server = ASGIServer(app)
         server.run(host="127.0.0.1", port=8000)
 
         # 预绑定 socket
-        server = Server(app)
+        server = ASGIServer(app)
         server.run(sockets=[sock1, sock2])
     """
 
-    def __init__(self, app: Any, *, root_path: str = "") -> None:
-        self.app = app
-        self.root_path = root_path
+    def __init__(self, app: Any, *, root_path: str = "") -> None: ...
 
-        self._servers: list[asyncio.Server] = []
-        self._server_state: dict[str, Any] = {
-            "connections": set(),
-        }
-        self.should_exit = False
-        self._force_exit = False
-
-        # Lifespan state
-        self._lifespan_task: asyncio.Task[None] | None = None
-        self._lifespan_receive_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self.lifespan_startup_complete = asyncio.Event()
-        self.lifespan_shutdown_complete = asyncio.Event()
-        self.lifespan_startup_failed = False
-        self._app_state: dict[str, Any] = {}
-
-    @property
     def ports(self) -> list[int]:
         """返回所有 TCP server 实际绑定的端口。"""
-        result: list[int] = []
-        for server in self._servers:
-            if server.sockets:
-                for sock in server.sockets:
-                    result.append(sock.getsockname()[1])
-        return result
+        ...
 
     def run(
         self,
@@ -91,204 +35,29 @@ class Server:
         sockets: list[_socket.socket] | None = None,
         on_startup: Any = None,
     ) -> None:
-        """阻塞运行 server。
+        """阻塞运行 server。内部自动完成 lifespan → TCP → main_loop → shutdown。
 
         on_startup: 可选的 async callback，在所有 TCP server 启动后调用。
         """
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            _install_asyncio_exception_handler(loop)
-            loop.run_until_complete(self._serve(
-                host=host, port=port, sockets=sockets, on_startup=on_startup,
-            ))
-        except KeyboardInterrupt:
-            pass
-        finally:
-            loop.close()
+        ...
 
-    async def _serve(
-        self,
-        *,
-        host: str | None,
-        port: int | None,
-        sockets: list[_socket.socket] | None,
-        on_startup: Any,
-    ) -> None:
-        """主服务循环：lifespan startup → TCP startup → main_loop → shutdown。"""
-        await self.lifespan_startup()
-
-        if self.lifespan_startup_failed:
-            logger.error("Lifespan startup failed, aborting")
-            return
-
-        await self.startup(host=host, port=port, sockets=sockets)
-
-        if on_startup:
-            await on_startup()
-
-        self._install_signal_handlers()
-
-        await self.main_loop()
-
-        await self.shutdown()
-
-        await self._lifespan_shutdown()
-
-    async def lifespan_startup(self) -> None:
-        """发送 lifespan.startup 事件给 ASGI app。"""
-        scope: dict[str, Any] = {
-            "type": "lifespan",
-            "asgi": {"version": "3.0", "spec_version": "2.0"},
-            "state": self._app_state,
-        }
-
-        async def receive() -> dict[str, Any]:
-            return await self._lifespan_receive_queue.get()
-
-        async def send(message: dict[str, Any]) -> None:
-            msg_type = message["type"]
-            if msg_type == "lifespan.startup.complete":
-                self.lifespan_startup_complete.set()
-            elif msg_type == "lifespan.startup.failed":
-                self.lifespan_startup_failed = True
-                self.lifespan_startup_complete.set()
-                logger.error("Lifespan startup failed: %s",
-                             message.get("message", ""))
-            elif msg_type == "lifespan.shutdown.complete":
-                self.lifespan_shutdown_complete.set()
-
-        self._lifespan_task = asyncio.get_running_loop().create_task(
-            scope_runner(self.app, scope, receive, send)
-        )
-
-        await self._lifespan_receive_queue.put({"type": "lifespan.startup"})
-
-        await self.lifespan_startup_complete.wait()
-
-    async def _lifespan_shutdown(self) -> None:
-        """发送 lifespan.shutdown 事件给 ASGI app。"""
-        if self._lifespan_task is None or self._lifespan_task.done():
-            return
-
-        await self._lifespan_receive_queue.put({"type": "lifespan.shutdown"})
-
-        try:
-            await asyncio.wait_for(self.lifespan_shutdown_complete.wait(), timeout=30.0)
-        except asyncio.TimeoutError:
-            logger.warning("Lifespan shutdown timed out")
-
-        if not self._lifespan_task.done():
-            self._lifespan_task.cancel()
-            try:
-                await self._lifespan_task
-            except asyncio.CancelledError:
-                pass
-
-    async def startup(
+    async def start(
         self,
         *,
         host: str | None = None,
         port: int | None = None,
         sockets: list[_socket.socket] | None = None,
     ) -> None:
-        """创建 TCP server 并开始监听。"""
-        loop = asyncio.get_running_loop()
-        _install_asyncio_exception_handler(loop)
+        """异步启动（在已有 event loop 中使用），内部自动完成 lifespan startup → TCP listen。"""
+        ...
 
-        def _create_protocol() -> HTTPProtocol:
-            return HTTPProtocol(
-                self.app,
-                server_state=self._server_state,
-                root_path=self.root_path,
-            )
+    async def shutdown(self) -> None:
+        """异步停止。内部自动完成 TCP close → lifespan shutdown。"""
+        ...
 
-        if sockets:
-            for sock in sockets:
-                server = await loop.create_server(
-                    _create_protocol,
-                    sock=sock,
-                )
-                self._servers.append(server)
-        elif host is not None and port is not None:
-            server = await loop.create_server(
-                _create_protocol,
-                host=host,
-                port=port,
-                reuse_address=True,
-            )
-            self._servers.append(server)
-        else:
-            raise ValueError("Must provide either (host, port) or sockets")
-
-        logger.info("ASGI server started (%d listener(s))", len(self._servers))
-
-    async def main_loop(self) -> None:
-        """主循环 — 等待退出信号。"""
-        while not self.should_exit:
-            await asyncio.sleep(0.1)
-
-    async def shutdown(self, timeout: float = 10.0) -> None:
-        """Graceful shutdown。"""
-        logger.info("Shutting down...")
-
-        for server in self._servers:
-            server.close()
-
-        connections = set(self._server_state["connections"])
-        if connections:
-            logger.info("Shutting down %d connection(s)", len(connections))
-            for conn in connections:
-                conn.shutdown()
-
-        for server in self._servers:
-            await server.wait_closed()
-
-        remaining = self._server_state["connections"]
-        if remaining:
-            try:
-                await asyncio.wait_for(
-                    self._wait_connections_closed(),
-                    timeout=timeout,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Shutdown timeout — closing %d remaining connection(s)",
-                               len(remaining))
-                for conn in set(remaining):
-                    conn.transport.close()
-
-        logger.info("Server stopped")
-
-    async def _wait_connections_closed(self) -> None:
-        while self._server_state["connections"]:
-            await asyncio.sleep(0.1)
-
-    def _install_signal_handlers(self) -> None:
-        """安装 SIGINT/SIGTERM 处理器。"""
-        if sys.platform == "win32":
-            signal.signal(signal.SIGINT, self._handle_signal_sync)
-            signal.signal(signal.SIGBREAK, self._handle_signal_sync)  # type: ignore[attr-defined]
-        else:
-            loop = asyncio.get_running_loop()
-            loop.add_signal_handler(signal.SIGINT, self._handle_signal)
-            loop.add_signal_handler(signal.SIGTERM, self._handle_signal)
-
-    def _handle_signal(self) -> None:
-        if self.should_exit:
-            self._force_exit = True
-            print("\nForce shutting down...", flush=True)
-            os._exit(0)
-        self.should_exit = True
-        print("\nShutting down gracefully... Press Ctrl+C again to force exit", flush=True)
-
-    def _handle_signal_sync(self, signum: int, frame: Any) -> None:
-        self._handle_signal()
+    def signal_exit(self) -> None:
+        """外部信号触发优雅退出（中断 main_loop）。"""
+        ...
 
 
-async def scope_runner(app: Any, scope: dict[str, Any],
-                       receive: Any, send: Any) -> None:
-    """运行 ASGI app，捕获异常。"""
-    try:
-        await app(scope, receive, send)
-    except Exception:
-        logger.exception("ASGI lifespan raised exception")
+from . import _asgi_impl as _asgi_impl  # noqa: E402, F401 — trigger @impl registration
