@@ -53,5 +53,5 @@ mutobj = { path = "../mutobj", editable = true }
 
 [tool.pyright]
 pythonVersion = "3.11"
-include = ["src"]
+include = ["src", "tests/test_codec_json.py"]
 extraPaths = ["src"]
