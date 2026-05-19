@@ -11,7 +11,7 @@ import sys
 from typing import Any
 
 from mutio.net._protocol import HTTPProtocol
-from mutio.net.server import _is_expected_disconnect_error
+from mutio.net.server import is_expected_disconnect_error
 
 logger = logging.getLogger("mutio.net.server")
 
@@ -29,7 +29,7 @@ def _install_asyncio_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
     ) -> None:
         exception = context.get("exception")
         message = context.get("message", "Unhandled exception in asyncio callback")
-        if exception and _is_expected_disconnect_error(exception):
+        if exception and is_expected_disconnect_error(exception):
             logger.debug("%s: %s", message, exception)
             return
         if previous_handler is not None:
@@ -68,9 +68,9 @@ class Server:
         # Lifespan state
         self._lifespan_task: asyncio.Task[None] | None = None
         self._lifespan_receive_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self._lifespan_startup_complete = asyncio.Event()
-        self._lifespan_shutdown_complete = asyncio.Event()
-        self._lifespan_startup_failed = False
+        self.lifespan_startup_complete = asyncio.Event()
+        self.lifespan_shutdown_complete = asyncio.Event()
+        self.lifespan_startup_failed = False
         self._app_state: dict[str, Any] = {}
 
     @property
@@ -116,9 +116,9 @@ class Server:
         on_startup: Any,
     ) -> None:
         """主服务循环：lifespan startup → TCP startup → main_loop → shutdown。"""
-        await self._lifespan_startup()
+        await self.lifespan_startup()
 
-        if self._lifespan_startup_failed:
+        if self.lifespan_startup_failed:
             logger.error("Lifespan startup failed, aborting")
             return
 
@@ -135,7 +135,7 @@ class Server:
 
         await self._lifespan_shutdown()
 
-    async def _lifespan_startup(self) -> None:
+    async def lifespan_startup(self) -> None:
         """发送 lifespan.startup 事件给 ASGI app。"""
         scope: dict[str, Any] = {
             "type": "lifespan",
@@ -149,14 +149,14 @@ class Server:
         async def send(message: dict[str, Any]) -> None:
             msg_type = message["type"]
             if msg_type == "lifespan.startup.complete":
-                self._lifespan_startup_complete.set()
+                self.lifespan_startup_complete.set()
             elif msg_type == "lifespan.startup.failed":
-                self._lifespan_startup_failed = True
-                self._lifespan_startup_complete.set()
+                self.lifespan_startup_failed = True
+                self.lifespan_startup_complete.set()
                 logger.error("Lifespan startup failed: %s",
                              message.get("message", ""))
             elif msg_type == "lifespan.shutdown.complete":
-                self._lifespan_shutdown_complete.set()
+                self.lifespan_shutdown_complete.set()
 
         self._lifespan_task = asyncio.get_running_loop().create_task(
             scope_runner(self.app, scope, receive, send)
@@ -164,7 +164,7 @@ class Server:
 
         await self._lifespan_receive_queue.put({"type": "lifespan.startup"})
 
-        await self._lifespan_startup_complete.wait()
+        await self.lifespan_startup_complete.wait()
 
     async def _lifespan_shutdown(self) -> None:
         """发送 lifespan.shutdown 事件给 ASGI app。"""
@@ -174,7 +174,7 @@ class Server:
         await self._lifespan_receive_queue.put({"type": "lifespan.shutdown"})
 
         try:
-            await asyncio.wait_for(self._lifespan_shutdown_complete.wait(), timeout=30.0)
+            await asyncio.wait_for(self.lifespan_shutdown_complete.wait(), timeout=30.0)
         except asyncio.TimeoutError:
             logger.warning("Lifespan shutdown timed out")
 

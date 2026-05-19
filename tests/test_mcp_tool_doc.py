@@ -1,7 +1,7 @@
 """测试 MCPToolProvider.list_tools 使用声明 docstring 而非 @impl docstring。"""
 
 import mutobj
-from mutio.mcp._view_impl import _get_declaration_doc
+from mutobj import get_declaration_doc
 
 
 class TestGetDeclarationDoc:
@@ -14,14 +14,14 @@ class TestGetDeclarationDoc:
                 """Run the service."""
                 ...
 
-        assert _get_declaration_doc(Svc, "run") == "Run the service."
+        assert get_declaration_doc(Svc, "run") == "Run the service."
 
     def test_returns_none_for_no_docstring(self):
         """声明方法没有 docstring 时，返回 None"""
         class Svc2(mutobj.Declaration):
             def run(self) -> str: ...
 
-        assert _get_declaration_doc(Svc2, "run") is None
+        assert get_declaration_doc(Svc2, "run") is None
 
     def test_returns_none_for_nonexistent_method(self):
         """查询不存在的方法时，返回 None"""
@@ -30,7 +30,7 @@ class TestGetDeclarationDoc:
                 """Run."""
                 ...
 
-        assert _get_declaration_doc(Svc3, "no_such_method") is None
+        assert get_declaration_doc(Svc3, "no_such_method") is None
 
     def test_returns_original_after_impl_override(self):
         """@impl 覆盖后，仍能取回原始声明的 docstring"""
@@ -49,7 +49,7 @@ class TestGetDeclarationDoc:
             # @impl 覆盖了类方法的 __doc__
             assert Svc4.greet.__doc__ == "Overridden doc."
             # _get_declaration_doc 取回的是原始声明的 docstring
-            assert _get_declaration_doc(Svc4, "greet") == "Original greeting doc."
+            assert get_declaration_doc(Svc4, "greet") == "Original greeting doc."
         finally:
             mutobj.unregister_module_impls("test_mcp_doc_impl")
 
@@ -58,7 +58,7 @@ class TestGetDeclarationDoc:
         class Plain:
             def run(self): ...
 
-        assert _get_declaration_doc(Plain, "run") is None
+        assert get_declaration_doc(Plain, "run") is None
 
     def test_traverses_mro(self):
         """通过 MRO 查找父类的声明 docstring"""
@@ -70,4 +70,4 @@ class TestGetDeclarationDoc:
         class Child(Base):
             pass
 
-        assert _get_declaration_doc(Child, "action") == "Base action doc."
+        assert get_declaration_doc(Child, "action") == "Base action doc."

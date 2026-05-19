@@ -32,3 +32,6 @@ class HttpClient(mutobj.Declaration):
     def create(*, user_agent: str | None = None, **kwargs: Any) -> httpx.AsyncClient:
         """创建 httpx.AsyncClient。user_agent 传则覆盖全局默认。"""
         ...
+
+
+from . import _client_impl as _client_impl  # noqa: E402, F401 — trigger @impl registration

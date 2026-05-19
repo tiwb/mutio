@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-import json
+from mutio.codec import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
+
+from mutio.codec.json import (
+    JsonObject,
+    JsonValue,
+)
 
 logger = logging.getLogger("mutio.mcp")
 
@@ -30,8 +35,8 @@ class JsonRpcError(Exception):
     message: str
     data: Any = None
 
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"code": self.code, "message": self.message}
+    def to_dict(self) -> JsonObject:
+        d: JsonObject = {"code": self.code, "message": self.message}
         if self.data is not None:
             d["data"] = self.data
         return d
@@ -52,8 +57,8 @@ class JsonRpcDispatcher:
         response = await dispatch.handle(message_dict)
     """
 
-    _handlers: dict[str, Handler] = field(default_factory=dict)
-    _notification_handlers: dict[str, Handler] = field(default_factory=dict)
+    _handlers: dict[str, Handler] = field(default_factory=dict[str, Handler])
+    _notification_handlers: dict[str, Handler] = field(default_factory=dict[str, Handler])
 
     def method(self, name: str) -> Callable[[Handler], Handler]:
         """注册 JSON-RPC 方法处理器（装饰器）。"""
@@ -77,7 +82,7 @@ class JsonRpcDispatcher:
         """编程式注册 notification 处理器。"""
         self._notification_handlers[name] = handler
 
-    async def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
+    async def handle(self, message: JsonObject) -> JsonObject | None:
         """处理单条 JSON-RPC 消息，返回响应（notification 返回 None）。"""
         if message.get("jsonrpc") != "2.0":
             return _error_response(None, INVALID_REQUEST, "Missing or invalid jsonrpc version")
@@ -143,13 +148,13 @@ class JsonRpcDispatcher:
                 _error_response(None, INVALID_REQUEST, "Request must be object or array")
             ).encode()
 
-    async def _handle_batch(self, messages: list[Any]) -> bytes | None:
+    async def _handle_batch(self, messages: list[JsonValue]) -> bytes | None:
         if not messages:
             return json.dumps(
                 _error_response(None, INVALID_REQUEST, "Empty batch")
             ).encode()
 
-        responses: list[dict[str, Any]] = []
+        responses: list[JsonValue] = []
         for msg in messages:
             if not isinstance(msg, dict):
                 responses.append(
@@ -165,29 +170,29 @@ class JsonRpcDispatcher:
         return json.dumps(responses).encode()
 
 
-def _success_response(msg_id: Any, result: Any) -> dict[str, Any]:
+def _success_response(msg_id: JsonValue, result: JsonValue) -> JsonObject:
     return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
 
-def _error_response(msg_id: Any, code: int, message: str,
-                    data: Any = None) -> dict[str, Any]:
-    error: dict[str, Any] = {"code": code, "message": message}
+def _error_response(msg_id: JsonValue, code: int, message: str,
+                    data: JsonValue = None) -> JsonObject:
+    error: JsonObject = {"code": code, "message": message}
     if data is not None:
         error["data"] = data
     return {"jsonrpc": "2.0", "id": msg_id, "error": error}
 
 
-def make_request(msg_id: Any, method: str, params: Any = None) -> dict[str, Any]:
+def make_request(msg_id: JsonValue, method: str, params: Any = None) -> JsonObject:
     """构造 JSON-RPC request。"""
-    msg: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id, "method": method}
+    msg: JsonObject = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
         msg["params"] = params
     return msg
 
 
-def make_notification(method: str, params: Any = None) -> dict[str, Any]:
+def make_notification(method: str, params: Any = None) -> JsonObject:
     """构造 JSON-RPC notification。"""
-    msg: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+    msg: JsonObject = {"jsonrpc": "2.0", "method": method}
     if params is not None:
         msg["params"] = params
     return msg
@@ -206,12 +211,12 @@ class ToolDef:
     """MCP tool 定义。"""
     name: str
     description: str = ""
-    inputSchema: dict[str, Any] = field(default_factory=lambda: {
+    inputSchema: JsonObject = field(default_factory=lambda: {
         "type": "object",
         "properties": {},
     })
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "name": self.name,
             "description": self.description,
@@ -227,7 +232,7 @@ class ResourceDef:
     description: str = ""
     mimeType: str = "text/plain"
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "uri": self.uri,
             "name": self.name,
@@ -244,8 +249,8 @@ class ResourceContent:
     blob: str | None = None  # base64 encoded
     mimeType: str = "text/plain"
 
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"uri": self.uri, "mimeType": self.mimeType}
+    def to_dict(self) -> JsonObject:
+        d: JsonObject = {"uri": self.uri, "mimeType": self.mimeType}
         if self.text is not None:
             d["text"] = self.text
         if self.blob is not None:
@@ -258,9 +263,9 @@ class PromptDef:
     """MCP prompt 定义。"""
     name: str
     description: str = ""
-    arguments: list[dict[str, Any]] = field(default_factory=list)
+    arguments: list[JsonValue] = field(default_factory=list[JsonValue])
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "name": self.name,
             "description": self.description,
@@ -272,20 +277,20 @@ class PromptDef:
 class PromptMessage:
     """MCP prompt 消息。"""
     role: str  # "user" | "assistant"
-    content: dict[str, Any] = field(default_factory=dict)
+    content: JsonObject = field(default_factory=dict[str, JsonValue])
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {"role": self.role, "content": self.content}
 
 
 @dataclass
 class ToolResult:
     """MCP tool 调用结果。"""
-    content: list[dict[str, Any]] = field(default_factory=list)
+    content: list[JsonValue] = field(default_factory=list[JsonValue])
     isError: bool = False
 
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"content": self.content}
+    def to_dict(self) -> JsonObject:
+        d: JsonObject = {"content": self.content}
         if self.isError:
             d["isError"] = True
         return d
@@ -304,13 +309,13 @@ class ToolResult:
 @dataclass
 class ServerCapabilities:
     """MCP server 能力声明。"""
-    tools: dict[str, Any] | None = None
-    resources: dict[str, Any] | None = None
-    prompts: dict[str, Any] | None = None
-    logging: dict[str, Any] | None = None
+    tools: JsonObject | None = None
+    resources: JsonObject | None = None
+    prompts: JsonObject | None = None
+    logging: JsonObject | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {}
+    def to_dict(self) -> JsonObject:
+        d: JsonObject = {}
         if self.tools is not None:
             d["tools"] = self.tools
         if self.resources is not None:

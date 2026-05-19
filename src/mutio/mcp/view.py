@@ -44,3 +44,6 @@ class MCPView(View):
         每个 view 实例在首次请求时调用一次。
         """
         ...
+
+
+from . import _view_impl as _view_impl  # noqa: E402, F401 — trigger @impl registration

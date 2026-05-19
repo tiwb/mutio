@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import inspect
-import json
+from mutio.codec import json
 import logging
 import secrets
 from typing import Any, cast
 
 import mutobj
 
+from mutio.codec.json import JsonValue
 from mutio.net.server import Request, Response
 from mutio.mcp.toolset import MCPToolSet
 from mutio.mcp.promptset import MCPPromptSet
@@ -104,7 +105,7 @@ class MCPToolProvider:
         for tool_name, (instance, method_name) in self._tools.items():
             method = getattr(instance, method_name)
             # 优先使用声明的 docstring，避免被 @impl 覆盖
-            doc = _get_declaration_doc(type(instance), method_name)
+            doc = mutobj.get_declaration_doc(type(instance), method_name)
             if doc is None:
                 doc = method.__doc__
             schema = function_to_mcp_input_schema(method, doc=doc)
@@ -128,25 +129,6 @@ class MCPToolProvider:
         if isinstance(result, ToolResult):
             return result
         return ToolResult.text(str(result))
-
-
-def _get_declaration_doc(cls: type, method_name: str) -> str | None:
-    """从 _impl_chain 取回声明时的原始 docstring，避免被 @impl 覆盖。
-
-    沿 MRO 遍历，跳过 __doc__ 为 None 的默认条目（子类 wrapper 可能没有 doc）。
-    """
-    try:
-        from mutobj.core import _impl_chain
-        for klass in cls.__mro__:
-            chain = _impl_chain.get((klass, method_name), [])
-            for func, source_module, _seq in chain:
-                if source_module == "__default__":
-                    doc = getattr(func, "__doc__", None)
-                    if doc is not None:
-                        return doc
-    except ImportError:
-        pass
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -194,10 +176,13 @@ def _normalize_prompt_result(result: Any) -> list[PromptMessage]:
         return [PromptMessage(role="user", content={"type": "text", "text": result})]
     if isinstance(result, PromptMessage):
         return [result]
-    if isinstance(result, list) and all(isinstance(m, PromptMessage) for m in result):
-        return result
+    if isinstance(result, list):
+        items = cast(list[Any], result)
+        if all(isinstance(m, PromptMessage) for m in items):
+            return [m for m in items if isinstance(m, PromptMessage)]
     raise TypeError(
-        f"Prompt method must return str | PromptMessage | list[PromptMessage], got {type(result)!r}"
+        "Prompt method must return str | PromptMessage | list[PromptMessage], "
+        f"got {type(result).__name__}"  # pyright: ignore[reportUnknownArgumentType]
     )
 
 
@@ -257,7 +242,7 @@ class MCPPromptProvider:
         result: list[dict[str, Any]] = []
         for prompt_name, (instance, method_name) in self._prompts.items():
             method = getattr(instance, method_name)
-            doc = _get_declaration_doc(type(instance), method_name)
+            doc = mutobj.get_declaration_doc(type(instance), method_name)
             if doc is None:
                 doc = method.__doc__ or ""
             arguments = _infer_prompt_arguments(method)
@@ -279,7 +264,7 @@ class MCPPromptProvider:
         if inspect.iscoroutine(raw):
             raw = await raw
         messages = _normalize_prompt_result(raw)
-        doc = _get_declaration_doc(type(instance), method_name)
+        doc = mutobj.get_declaration_doc(type(instance), method_name)
         if doc is None:
             doc = method.__doc__ or ""
         response: dict[str, Any] = {"messages": [m.to_dict() for m in messages]}
@@ -293,39 +278,39 @@ class MCPPromptProvider:
 # ---------------------------------------------------------------------------
 
 
-class _MCPViewExt(mutobj.Extension[MCPView]):
+class MCPViewExt(mutobj.Extension[MCPView]):
     """MCPView 的运行时状态。"""
-    _tool_provider: MCPToolProvider | None = None
-    _prompt_provider: MCPPromptProvider | None = None
-    _sessions: dict[str, _MCPSession] = mutobj.field(default_factory=dict)
-    _dispatch: JsonRpcDispatcher | None = None
+    tool_provider: MCPToolProvider | None = None
+    prompt_provider: MCPPromptProvider | None = None
+    sessions: dict[str, MCPSession] = mutobj.field(default_factory=dict)
+    dispatch: JsonRpcDispatcher | None = None
 
 
-class _MCPSession:
+class MCPSession:
     """MCP session 状态。"""
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
         self.initialized = False
 
 
-def _get_ext(view: MCPView) -> _MCPViewExt:
-    ext = cast(_MCPViewExt, _MCPViewExt.get_or_create(view))
-    if ext._tool_provider is None:
-        ext._tool_provider = MCPToolProvider(target_view=type(view))
-        ext._prompt_provider = MCPPromptProvider(target_view=type(view))
-        ext._dispatch = JsonRpcDispatcher()
+def _get_ext(view: MCPView) -> MCPViewExt:
+    ext = MCPViewExt.get_or_create(view)
+    if ext.tool_provider is None:
+        ext.tool_provider = MCPToolProvider(target_view=type(view))
+        ext.prompt_provider = MCPPromptProvider(target_view=type(view))
+        ext.dispatch = JsonRpcDispatcher()
         _setup_handlers(ext, view)
     return ext
 
 
-def _setup_handlers(ext: _MCPViewExt, view: MCPView) -> None:
+def _setup_handlers(ext: MCPViewExt, view: MCPView) -> None:
     """注册 MCP JSON-RPC 方法。"""
-    assert ext._dispatch is not None
-    assert ext._tool_provider is not None
-    assert ext._prompt_provider is not None
+    assert ext.dispatch is not None
+    assert ext.tool_provider is not None
+    assert ext.prompt_provider is not None
 
-    tp = ext._tool_provider
-    pp = ext._prompt_provider
+    tp = ext.tool_provider
+    pp = ext.prompt_provider
 
     async def _handle_initialize(params: dict[str, Any]) -> dict[str, Any]:
         tools = tp.list_tools()
@@ -380,20 +365,20 @@ def _setup_handlers(ext: _MCPViewExt, view: MCPView) -> None:
         prompt_name = params.get("name")
         if not prompt_name:
             raise JsonRpcError(INVALID_PARAMS, "Missing prompt name")
-        arguments = params.get("arguments", {}) or {}
+        arguments: dict[str, Any] = params.get("arguments", {}) or {}
         return await pp.call_prompt(prompt_name, arguments)
 
-    ext._dispatch.add_method("initialize", _handle_initialize)
-    ext._dispatch.add_notification("notifications/initialized", _handle_initialized)
-    ext._dispatch.add_method("ping", _handle_ping)
-    ext._dispatch.add_method("tools/list", _handle_tools_list)
-    ext._dispatch.add_method("tools/call", _handle_tools_call)
-    ext._dispatch.add_method("prompts/list", _handle_prompts_list)
-    ext._dispatch.add_method("prompts/get", _handle_prompts_get)
+    ext.dispatch.add_method("initialize", _handle_initialize)
+    ext.dispatch.add_notification("notifications/initialized", _handle_initialized)
+    ext.dispatch.add_method("ping", _handle_ping)
+    ext.dispatch.add_method("tools/list", _handle_tools_list)
+    ext.dispatch.add_method("tools/call", _handle_tools_call)
+    ext.dispatch.add_method("prompts/list", _handle_prompts_list)
+    ext.dispatch.add_method("prompts/get", _handle_prompts_get)
 
     # 子类可注册 vendor 扩展方法（如 pysandbox/namespaces.*）
     try:
-        view.register_extra_methods(ext._dispatch)
+        view.register_extra_methods(ext.dispatch)
     except Exception:
         logger.exception("register_extra_methods() raised")
 
@@ -404,7 +389,7 @@ def _setup_handlers(ext: _MCPViewExt, view: MCPView) -> None:
 
 
 async def _send_json_response(
-    status: int, data: Any,
+    status: int, data: JsonValue,
     extra_headers: dict[str, str] | None = None,
 ) -> Response:
     headers = {"content-type": "application/json"}
@@ -420,9 +405,9 @@ async def _send_empty_response(status: int) -> Response:
 
 
 @mutobj.impl(MCPView.post)
-async def _mcp_view_post(self: MCPView, request: Request) -> Response:
+async def mcp_view_post(self: MCPView, request: Request) -> Response:
     ext = _get_ext(self)
-    assert ext._dispatch is not None
+    assert ext.dispatch is not None
 
     raw = await request.body()
     try:
@@ -433,7 +418,7 @@ async def _mcp_view_post(self: MCPView, request: Request) -> Response:
             "error": {"code": -32700, "message": "Parse error"},
         })
 
-    messages = parsed if isinstance(parsed, list) else [parsed]
+    messages: list[JsonValue] = parsed if isinstance(parsed, list) else [parsed]
     has_request = any(
         isinstance(m, dict) and "id" in m and "method" in m
         for m in messages
@@ -442,19 +427,25 @@ async def _mcp_view_post(self: MCPView, request: Request) -> Response:
     if not has_request:
         for msg in messages:
             if isinstance(msg, dict):
-                await ext._dispatch.handle(msg)
+                await ext.dispatch.handle(msg)
         return await _send_empty_response(202)
 
+    result_data: JsonValue
     if isinstance(parsed, list):
-        responses = []
+        responses: list[JsonValue] = []
         for msg in parsed:
             if isinstance(msg, dict):
-                resp = await ext._dispatch.handle(msg)
+                resp = await ext.dispatch.handle(msg)
                 if resp is not None:
                     responses.append(resp)
         result_data = responses if len(responses) != 1 else responses[0]
+    elif isinstance(parsed, dict):
+        result_data = await ext.dispatch.handle(parsed)
     else:
-        result_data = await ext._dispatch.handle(parsed)
+        return await _send_json_response(400, {
+            "jsonrpc": "2.0", "id": None,
+            "error": {"code": -32600, "message": "Invalid request"},
+        })
 
     if result_data is None:
         return await _send_empty_response(202)
@@ -462,8 +453,8 @@ async def _mcp_view_post(self: MCPView, request: Request) -> Response:
     extra_headers: dict[str, str] = {}
     if isinstance(parsed, dict) and parsed.get("method") == "initialize":
         session_id = secrets.token_hex(16)
-        session = _MCPSession(session_id=session_id)
-        ext._sessions[session_id] = session
+        session = MCPSession(session_id=session_id)
+        ext.sessions[session_id] = session
         extra_headers["mcp-session-id"] = session_id
 
     accept = request.headers.get("accept", "")
@@ -482,11 +473,11 @@ async def _mcp_view_post(self: MCPView, request: Request) -> Response:
 
 
 @mutobj.impl(MCPView.delete)
-async def _mcp_view_delete(self: MCPView, request: Request) -> Response:
+async def mcp_view_delete(self: MCPView, request: Request) -> Response:
     ext = _get_ext(self)
     session_id = request.headers.get("mcp-session-id", "")
-    if session_id and session_id in ext._sessions:
-        del ext._sessions[session_id]
+    if session_id and session_id in ext.sessions:
+        del ext.sessions[session_id]
         return await _send_empty_response(200)
     else:
         return await _send_empty_response(404)
@@ -498,10 +489,10 @@ async def _mcp_view_delete(self: MCPView, request: Request) -> Response:
 
 
 @mutobj.impl(MCPView.extra_capabilities)
-def _mcp_view_extra_capabilities(self: MCPView) -> dict[str, Any]:
+def mcp_view_extra_capabilities(self: MCPView) -> dict[str, Any]:
     return {}
 
 
 @mutobj.impl(MCPView.register_extra_methods)
-def _mcp_view_register_extra_methods(self: MCPView, dispatch: Any) -> None:
+def mcp_view_register_extra_methods(self: MCPView, dispatch: Any) -> None:
     return None

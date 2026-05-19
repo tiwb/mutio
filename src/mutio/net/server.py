@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import socket as _socket
 from pathlib import Path
-from typing import Any, AsyncIterator, Sequence
+from typing import Any, AsyncIterator, ClassVar, Sequence
 
 import mutobj
 
@@ -128,7 +128,7 @@ _EXPECTED_DISCONNECT_ERRNOS = {32, 54, 104}
 _EXPECTED_DISCONNECT_WINERRORS = {64, 10053, 10054}
 
 
-def _is_expected_disconnect_error(exc: BaseException) -> bool:
+def is_expected_disconnect_error(exc: BaseException) -> bool:
     """判断是否为底层 transport 的预期断连异常。"""
     if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
         return True
@@ -186,8 +186,8 @@ class Server(mutobj.Declaration):
     base_path: str = ""
     redirect_slashes: bool = True
     """精确路径未命中时,自动尝试加/去 trailing slash 并 307 重定向(对齐 Starlette/FastAPI 默认)。"""
-    # 不带注解，作为普通类变量，避免被 DeclarationMeta 转换为 AttributeDescriptor
-    views = None  # type: tuple[type[View], ...] | None
+    # ClassVar 避免被 DeclarationMeta 转换为 AttributeDescriptor
+    views: ClassVar[tuple[type[View], ...] | None] = None
 
     async def route(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         """ASGI 入口 — 自动发现 View/WebSocketView 并路径匹配分发。"""
@@ -270,3 +270,6 @@ class WebSocketView(mutobj.Declaration):
 class StaticView(View):
     """静态文件服务。directory 为文件系统绝对路径。"""
     directory: str = ""
+
+
+from . import _server_impl as _server_impl  # noqa: E402, F401 — trigger @impl registration

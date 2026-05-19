@@ -52,6 +52,7 @@ asyncio_mode = "auto"
 mutobj = { path = "../mutobj", editable = true }
 
 [tool.pyright]
+typeCheckingMode = "strict"
 pythonVersion = "3.11"
 include = ["src", "tests/test_codec_json.py"]
 extraPaths = ["src"]

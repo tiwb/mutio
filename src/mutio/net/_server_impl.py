@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
+from mutio.codec import json
 import logging
 import mimetypes
 import re
 import socket as _socket
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Sequence
 from urllib.parse import parse_qs, unquote
 
 import mutobj
@@ -79,7 +79,7 @@ def _read_file_response(
 
 
 @mutobj.impl(JSONResponse.__init__)
-def _json_response_init(self: JSONResponse, content: Any, status_code: int = 200) -> None:
+def json_response_init(self: JSONResponse, content: Any, status_code: int = 200) -> None:
     Response.__init__(
         self,
         status_code=status_code,
@@ -89,12 +89,12 @@ def _json_response_init(self: JSONResponse, content: Any, status_code: int = 200
 
 
 @mutobj.impl(JSONResponse.render)
-def _json_response_render(self: JSONResponse, content: Any) -> bytes:
+def json_response_render(self: JSONResponse, content: Any) -> bytes:
     return json.dumps(content, ensure_ascii=False).encode("utf-8")
 
 
 @mutobj.impl(HTMLResponse.__init__)
-def _html_response_init(self: HTMLResponse, content: str | bytes, status_code: int = 200) -> None:
+def html_response_init(self: HTMLResponse, content: str | bytes, status_code: int = 200) -> None:
     Response.__init__(
         self,
         status_code=status_code,
@@ -104,7 +104,7 @@ def _html_response_init(self: HTMLResponse, content: str | bytes, status_code: i
 
 
 @mutobj.impl(PlainTextResponse.__init__)
-def _plain_text_response_init(self: PlainTextResponse, content: str | bytes, status_code: int = 200) -> None:
+def plain_text_response_init(self: PlainTextResponse, content: str | bytes, status_code: int = 200) -> None:
     Response.__init__(
         self,
         status_code=status_code,
@@ -114,7 +114,7 @@ def _plain_text_response_init(self: PlainTextResponse, content: str | bytes, sta
 
 
 @mutobj.impl(RedirectResponse.__init__)
-def _redirect_response_init(
+def redirect_response_init(
     self: RedirectResponse,
     url: str,
     status_code: int = 307,
@@ -126,7 +126,7 @@ def _redirect_response_init(
 
 
 @mutobj.impl(FileResponse.__init__)
-def _file_response_init(
+def file_response_init(
     self: FileResponse,
     path: str | Path,
     *,
@@ -151,19 +151,19 @@ def _file_response_init(
 # ---------------------------------------------------------------------------
 
 
-class _RequestExt(mutobj.Extension[Request]):
+class RequestExt(mutobj.Extension[Request]):
     """Request 的 ASGI 内部状态。"""
-    _receive: Any = None
-    _body: bytes | None = None
+    receive: Any = None
+    body: bytes | None = None
 
 
-class _WebSocketExt(mutobj.Extension[WebSocketConnection]):
+class WebSocketExt(mutobj.Extension[WebSocketConnection]):
     """WebSocketConnection 的 ASGI 内部状态。"""
-    _receive: Any = None
-    _send: Any = None
+    receive: Any = None
+    send: Any = None
 
 
-class _StreamingResponseExt(mutobj.Extension[StreamingResponse]):
+class StreamingResponseExt(mutobj.Extension[StreamingResponse]):
     """StreamingResponse 的 ASGI 内部状态（备用，body_iterator 已在 Declaration 中）。"""
 
 
@@ -172,13 +172,13 @@ class _StreamingResponseExt(mutobj.Extension[StreamingResponse]):
 # ---------------------------------------------------------------------------
 
 
-class _ServerExt(mutobj.Extension[Server]):
+class ServerExt(mutobj.Extension[Server]):
     """Server 的运行时状态。"""
-    _asgi_server: Any = None
-    _routes: list[Any] = mutobj.field(default_factory=list)
-    _static_dirs: list[tuple[str, Path]] = mutobj.field(default_factory=list)
-    _gen: int = -1
-    _allowed_views: tuple[type, ...] | None = None  # 缓存的 views 限制
+    asgi_server: Any = None
+    routes: list[Any] = mutobj.field(default_factory=list)
+    static_dirs: list[tuple[str, Path]] = mutobj.field(default_factory=list)
+    gen: int = -1
+    allowed_views: tuple[type, ...] | None = None  # 缓存的 views 限制
 
 
 # ---------------------------------------------------------------------------
@@ -187,22 +187,22 @@ class _ServerExt(mutobj.Extension[Server]):
 
 
 @mutobj.impl(Request.body)
-async def _request_body(self: Request) -> bytes:
-    ext = _RequestExt.get_or_create(self)
-    if ext._body is not None:
-        return ext._body
+async def request_body(self: Request) -> bytes:
+    ext = RequestExt.get_or_create(self)
+    if ext.body is not None:
+        return ext.body
     chunks: list[bytes] = []
     while True:
-        msg = await ext._receive()
+        msg = await ext.receive()
         chunks.append(msg.get("body", b""))
         if not msg.get("more_body", False):
             break
-    ext._body = b"".join(chunks)
-    return ext._body
+    ext.body = b"".join(chunks)
+    return ext.body
 
 
 @mutobj.impl(Request.json)
-async def _request_json(self: Request) -> Any:
+async def request_json(self: Request) -> Any:
     raw = await self.body()
     return json.loads(raw)
 
@@ -213,22 +213,22 @@ async def _request_json(self: Request) -> Any:
 
 
 @mutobj.impl(WebSocketConnection.accept)
-async def _ws_accept(self: WebSocketConnection) -> None:
-    ext = _WebSocketExt.get_or_create(self)
-    await ext._send({"type": "websocket.accept"})
+async def web_socket_connection_accept(self: WebSocketConnection) -> None:
+    ext = WebSocketExt.get_or_create(self)
+    await ext.send({"type": "websocket.accept"})
 
 
 @mutobj.impl(WebSocketConnection.receive)
-async def _ws_receive(self: WebSocketConnection) -> dict[str, Any]:
-    ext = _WebSocketExt.get_or_create(self)
-    return await ext._receive()
+async def web_socket_connection_receive(self: WebSocketConnection) -> dict[str, Any]:
+    ext = WebSocketExt.get_or_create(self)
+    return await ext.receive()
 
 
 @mutobj.impl(WebSocketConnection.receive_json)
-async def _ws_receive_json(self: WebSocketConnection) -> Any:
-    ext = _WebSocketExt.get_or_create(self)
+async def web_socket_connection_receive_json(self: WebSocketConnection) -> Any:
+    ext = WebSocketExt.get_or_create(self)
     while True:
-        msg = await ext._receive()
+        msg = await ext.receive()
         if msg.get("type") == "websocket.disconnect":
             raise WebSocketDisconnect(msg.get("code", 1000))
         if "text" in msg:
@@ -236,24 +236,24 @@ async def _ws_receive_json(self: WebSocketConnection) -> Any:
 
 
 @mutobj.impl(WebSocketConnection.send_json)
-async def _ws_send_json(self: WebSocketConnection, data: Any) -> None:
-    ext = _WebSocketExt.get_or_create(self)
-    await ext._send({
+async def web_socket_connection_send_json(self: WebSocketConnection, data: Any) -> None:
+    ext = WebSocketExt.get_or_create(self)
+    await ext.send({
         "type": "websocket.send",
         "text": json.dumps(data, ensure_ascii=False),
     })
 
 
 @mutobj.impl(WebSocketConnection.send_bytes)
-async def _ws_send_bytes(self: WebSocketConnection, data: bytes) -> None:
-    ext = _WebSocketExt.get_or_create(self)
-    await ext._send({"type": "websocket.send", "bytes": data})
+async def web_socket_connection_send_bytes(self: WebSocketConnection, data: bytes) -> None:
+    ext = WebSocketExt.get_or_create(self)
+    await ext.send({"type": "websocket.send", "bytes": data})
 
 
 @mutobj.impl(WebSocketConnection.close)
-async def _ws_close(self: WebSocketConnection, code: int = 1000, reason: str = "") -> None:
-    ext = _WebSocketExt.get_or_create(self)
-    await ext._send({"type": "websocket.close", "code": code, "reason": reason})
+async def web_socket_connection_close(self: WebSocketConnection, code: int = 1000, reason: str = "") -> None:
+    ext = WebSocketExt.get_or_create(self)
+    await ext.send({"type": "websocket.close", "code": code, "reason": reason})
 
 
 # ---------------------------------------------------------------------------
@@ -262,32 +262,32 @@ async def _ws_close(self: WebSocketConnection, code: int = 1000, reason: str = "
 
 
 @mutobj.impl(View.get)
-async def _view_get(self: View, request: Request) -> Response | StreamingResponse:
+async def view_get(self: View, request: Request) -> Response | StreamingResponse:
     return Response(status_code=405)
 
 
 @mutobj.impl(View.post)
-async def _view_post(self: View, request: Request) -> Response | StreamingResponse:
+async def view_post(self: View, request: Request) -> Response | StreamingResponse:
     return Response(status_code=405)
 
 
 @mutobj.impl(View.put)
-async def _view_put(self: View, request: Request) -> Response | StreamingResponse:
+async def view_put(self: View, request: Request) -> Response | StreamingResponse:
     return Response(status_code=405)
 
 
 @mutobj.impl(View.delete)
-async def _view_delete(self: View, request: Request) -> Response | StreamingResponse:
+async def view_delete(self: View, request: Request) -> Response | StreamingResponse:
     return Response(status_code=405)
 
 
 @mutobj.impl(WebSocketView.connect)
-async def _ws_view_connect(self: WebSocketView, ws: WebSocketConnection) -> None:
+async def web_socket_view_connect(self: WebSocketView, ws: WebSocketConnection) -> None:
     await ws.close(code=4405, reason="Not implemented")
 
 
 @mutobj.impl(StaticView.get)
-async def _static_view_get(self: StaticView, request: Request) -> Response | StreamingResponse:
+async def static_view_get(self: StaticView, request: Request) -> Response | StreamingResponse:
     if not self.directory:
         return Response(status_code=404, body=b"Not Found")
     directory = Path(self.directory)
@@ -316,17 +316,17 @@ async def _static_view_get(self: StaticView, request: Request) -> Response | Str
 
 
 @mutobj.impl(Server.on_startup)
-async def _server_on_startup(self: Server) -> None:
+async def server_on_startup(self: Server) -> None:
     pass
 
 
 @mutobj.impl(Server.on_shutdown)
-async def _server_on_shutdown(self: Server) -> None:
+async def server_on_shutdown(self: Server) -> None:
     pass
 
 
 @mutobj.impl(Server.before_route)
-async def _server_before_route(self: Server, scope: dict[str, Any], path: str) -> Response | None:
+async def server_before_route(self: Server, scope: dict[str, Any], path: str) -> Response | None:
     return None
 
 
@@ -353,7 +353,7 @@ def _compile_path(path: str) -> tuple[re.Pattern[str], list[str]]:
     return pattern, param_names
 
 
-class _Route:
+class Route:
     __slots__ = ("path", "pattern", "param_names", "handler", "is_ws")
 
     def __init__(self, path: str, handler: Any, *, is_ws: bool = False) -> None:
@@ -363,25 +363,25 @@ class _Route:
         self.is_ws = is_ws
 
 
-def _is_view_allowed(ext: _ServerExt, view_cls: type) -> bool:
+def _is_view_allowed(ext: ServerExt, view_cls: type) -> bool:
     """检查 view 是否在 Server.views 限制范围内。"""
-    if ext._allowed_views is None:
+    if ext.allowed_views is None:
         return True
     # 使用类名比较，避免 reload 导致的身份不匹配
-    allowed_names = {v.__name__ for v in ext._allowed_views}
+    allowed_names = {v.__name__ for v in ext.allowed_views}
     return view_cls.__name__ in allowed_names
 
 
-def _discover_routes(ext: _ServerExt, server: Server) -> None:
+def _discover_routes(ext: ServerExt, server: Server) -> None:
     """从 Declaration 注册表发现 View/WebSocketView 子类，缓存路由。"""
     gen = mutobj.get_registry_generation()
-    if gen == ext._gen:
+    if gen == ext.gen:
         return
-    ext._gen = gen
-    ext._routes = []
-    ext._static_dirs = []
+    ext.gen = gen
+    ext.routes = []
+    ext.static_dirs = []
     # 缓存 views 限制
-    ext._allowed_views = server.views
+    ext.allowed_views = server.views
 
     for view_cls in mutobj.discover_subclasses(View):
         # 检查是否在 views 限制范围内
@@ -392,11 +392,11 @@ def _discover_routes(ext: _ServerExt, server: Server) -> None:
             view = view_cls()
             sv_path = view.path if isinstance(view.path, str) else (view.path[0] if view.path else "")
             if sv_path and view.directory:
-                ext._static_dirs.append((sv_path.rstrip("/"), Path(view.directory)))
+                ext.static_dirs.append((sv_path.rstrip("/"), Path(view.directory)))
             continue
         view = view_cls()
         for p in _iter_paths(view.path):
-            ext._routes.append(_Route(p, view, is_ws=False))
+            ext.routes.append(Route(p, view, is_ws=False))
 
     for ws_cls in mutobj.discover_subclasses(WebSocketView):
         # 检查是否在 views 限制范围内
@@ -404,7 +404,7 @@ def _discover_routes(ext: _ServerExt, server: Server) -> None:
             continue
         ws_view = ws_cls()
         for p in _iter_paths(ws_view.path):
-            ext._routes.append(_Route(p, ws_view, is_ws=True))
+            ext.routes.append(Route(p, ws_view, is_ws=True))
 
 
 def _iter_paths(path: str | tuple[str, ...]) -> list[str]:
@@ -419,10 +419,10 @@ def _iter_paths(path: str | tuple[str, ...]) -> list[str]:
 
 
 def _match_route(
-    ext: _ServerExt, path: str, *, ws: bool = False,
+    ext: ServerExt, path: str, *, ws: bool = False,
 ) -> tuple[Any, dict[str, str]] | None:
     """路径精确匹配。"""
-    for route in ext._routes:
+    for route in ext.routes:
         if route.is_ws != ws:
             continue
         m = route.pattern.match(path)
@@ -436,7 +436,7 @@ def _match_route(
 
 
 def _match_route_with_slash_fallback(
-    ext: _ServerExt, path: str, *, ws: bool = False,
+    ext: ServerExt, path: str, *, ws: bool = False,
 ) -> tuple[Any, dict[str, str]] | str | None:
     """先精确匹配,未命中则尝试加/去 trailing slash。
 
@@ -484,7 +484,7 @@ def _make_request(scope: dict[str, Any], receive: Any, path_params: dict[str, st
         query_params=query_params,
         path_params=path_params,
     )
-    _RequestExt.get_or_create(request)._receive = receive
+    RequestExt.get_or_create(request).receive = receive
     return request
 
 
@@ -510,9 +510,9 @@ def _make_ws_connection(
         path_params=path_params,
         headers=headers,
     )
-    ext = _WebSocketExt.get_or_create(ws)
-    ext._receive = receive
-    ext._send = send
+    ext = WebSocketExt.get_or_create(ws)
+    ext.receive = receive
+    ext.send = send
     return ws
 
 
@@ -547,18 +547,18 @@ async def _send_streaming_response(response: StreamingResponse, send_fn: Any) ->
         async for chunk in response.body_iterator:
             await send_fn({
                 "type": "http.response.body",
-                "body": chunk if isinstance(chunk, bytes) else chunk.encode(),
+                "body": chunk,
                 "more_body": True,
             })
     await send_fn({"type": "http.response.body", "body": b"", "more_body": False})
 
 
 @mutobj.impl(Server.route)
-async def _server_route(
+async def server_route(
     self: Server, scope: dict[str, Any], receive: Any, send: Any,
 ) -> None:
     """ASGI 入口 — 路径匹配 + View/WebSocketView 自动发现 + 静态文件 fallback。"""
-    ext = cast(_ServerExt, _ServerExt.get_or_create(self))
+    ext = ServerExt.get_or_create(self)
     _discover_routes(ext, self)
 
     scope_type = scope.get("type")
@@ -643,7 +643,7 @@ async def _server_route(
 
         # 静态文件 fallback
         if scope.get("method") == "GET":
-            for prefix, directory in ext._static_dirs:
+            for prefix, directory in ext.static_dirs:
                 rel = path[len(prefix):] if path.startswith(prefix) else None
                 if rel is None:
                     continue
@@ -693,7 +693,7 @@ def _parse_listen_arg(
     for item in listen:
         if isinstance(item, _socket.socket):
             sockets.append(item)
-        elif isinstance(item, str):
+        else:
             if ":" in item:
                 h, p = item.rsplit(":", 1)
                 host, port = h, int(p)
@@ -711,7 +711,7 @@ def _parse_listen_arg(
 
 
 @mutobj.impl(Server.run)
-def _server_run(
+def server_run(
     self: Server,
     *,
     listen: Sequence[str | _socket.socket] | None = None,
@@ -721,15 +721,15 @@ def _server_run(
     sockets, host, port = _parse_listen_arg(listen, self)
 
     # 包装 ASGI app：lifespan → on_startup/on_shutdown，其余 → route
-    async def _asgi_app(scope: dict, receive: Any, send: Any) -> None:
+    async def _asgi_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] == "lifespan":
             await _handle_lifespan(self, scope, receive, send)
         else:
             await self.route(scope, receive, send)
 
     asgi_server = _ASGIServer(_asgi_app)
-    ext = cast(_ServerExt, _ServerExt.get_or_create(self))
-    ext._asgi_server = asgi_server
+    ext = ServerExt.get_or_create(self)
+    ext.asgi_server = asgi_server
 
     if sockets:
         asgi_server.run(sockets=sockets)
@@ -740,7 +740,7 @@ def _server_run(
 
 
 @mutobj.impl(Server.start)
-async def _server_start(
+async def server_start(
     self: Server,
     *,
     listen: Sequence[str | _socket.socket] | None = None,
@@ -749,19 +749,19 @@ async def _server_start(
 
     sockets, host, port = _parse_listen_arg(listen, self)
 
-    async def _asgi_app(scope: dict, receive: Any, send: Any) -> None:
+    async def _asgi_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] == "lifespan":
             await _handle_lifespan(self, scope, receive, send)
         else:
             await self.route(scope, receive, send)
 
     asgi_server = _ASGIServer(_asgi_app)
-    ext = cast(_ServerExt, _ServerExt.get_or_create(self))
-    ext._asgi_server = asgi_server
+    ext = ServerExt.get_or_create(self)
+    ext.asgi_server = asgi_server
 
     # lifespan startup
-    await asgi_server._lifespan_startup()
-    if asgi_server._lifespan_startup_failed:
+    await asgi_server.lifespan_startup()
+    if asgi_server.lifespan_startup_failed:
         raise RuntimeError("Server lifespan startup failed")
 
     # TCP startup
@@ -774,11 +774,11 @@ async def _server_start(
 
 
 @mutobj.impl(Server.stop)
-async def _server_stop(self: Server) -> None:
-    ext = cast(_ServerExt, _ServerExt.get_or_create(self))
-    if ext._asgi_server is not None:
-        await ext._asgi_server.shutdown()
-        await ext._asgi_server._lifespan_shutdown()
+async def server_stop(self: Server) -> None:
+    ext = ServerExt.get_or_create(self)
+    if ext.asgi_server is not None:
+        await ext.asgi_server.shutdown()
+        await ext.asgi_server._lifespan_shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -787,7 +787,7 @@ async def _server_stop(self: Server) -> None:
 
 
 async def _handle_lifespan(
-    server: Server, scope: dict, receive: Any, send: Any,
+    server: Server, scope: dict[str, Any], receive: Any, send: Any,
 ) -> None:
     """桥接 ASGI lifespan 协议到 Server.on_startup/on_shutdown。"""
     started = False

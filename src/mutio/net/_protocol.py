@@ -11,7 +11,7 @@ from urllib.parse import unquote
 import h11
 import wsproto
 import wsproto.events as ws_events
-from mutio.net.server import WebSocketDisconnect, _is_expected_disconnect_error
+from mutio.net.server import WebSocketDisconnect, is_expected_disconnect_error
 
 logger = logging.getLogger("mutio.net.protocol")
 access_logger = logging.getLogger("mutio.net.access")
@@ -130,7 +130,7 @@ class HTTPProtocol(asyncio.Protocol):
 
         if self.cycle and not self.cycle.response_complete:
             self.cycle.disconnected = True
-            self.cycle._body_event.set()
+            self.cycle.body_event.set()
 
         if self.task and not self.task.done():
             self.task.cancel()
@@ -206,15 +206,15 @@ class HTTPProtocol(asyncio.Protocol):
 
             elif isinstance(event, h11.Data):
                 if self.cycle:
-                    self.cycle._body += event.data
-                    if len(self.cycle._body) > HIGH_WATER_LIMIT:
+                    self.cycle.body += event.data
+                    if len(self.cycle.body) > HIGH_WATER_LIMIT:
                         self.flow.pause_reading()
-                    self.cycle._body_event.set()
+                    self.cycle.body_event.set()
 
             elif isinstance(event, h11.EndOfMessage):
                 if self.cycle:
-                    self.cycle._more_body = False
-                    self.cycle._body_event.set()
+                    self.cycle.more_body = False
+                    self.cycle.body_event.set()
 
             elif isinstance(event, h11.ConnectionClosed):
                 break
@@ -373,7 +373,7 @@ class RequestResponseCycle:
     __slots__ = (
         "scope", "conn", "transport", "flow", "keep_alive",
         "on_response_complete",
-        "_body", "_body_event", "_more_body",
+        "body", "body_event", "more_body",
         "disconnected", "response_started", "response_complete",
         "_chunked", "_expected_content_length",
         "_start_time", "_status_code", "_response_body_size",
@@ -395,9 +395,9 @@ class RequestResponseCycle:
         self.keep_alive = keep_alive
         self.on_response_complete = on_response_complete
 
-        self._body = b""
-        self._body_event = asyncio.Event()
-        self._more_body = True
+        self.body = b""
+        self.body_event = asyncio.Event()
+        self.more_body = True
         self.disconnected = False
         self.response_started = False
         self.response_complete = False
@@ -427,25 +427,25 @@ class RequestResponseCycle:
         if self.disconnected:
             return {"type": "http.disconnect"}
 
-        if not self._more_body:
-            body = self._body
-            self._body = b""
+        if not self.more_body:
+            body = self.body
+            self.body = b""
             return {"type": "http.request", "body": body, "more_body": False}
 
-        await self._body_event.wait()
-        self._body_event.clear()
+        await self.body_event.wait()
+        self.body_event.clear()
 
         if self.disconnected:
             return {"type": "http.disconnect"}
 
-        body = self._body
-        self._body = b""
+        body = self.body
+        self.body = b""
         self.flow.resume_reading()
 
         return {
             "type": "http.request",
             "body": body,
-            "more_body": self._more_body,
+            "more_body": self.more_body,
         }
 
     async def send(self, message: dict[str, Any]) -> None:
@@ -676,7 +676,7 @@ class WSProtocol(asyncio.Protocol):
         try:
             self.transport.write(data)
         except Exception as exc:
-            if _is_expected_disconnect_error(exc):
+            if is_expected_disconnect_error(exc):
                 self._emit_disconnect(code)
                 raise WebSocketDisconnect(code) from exc
             raise
@@ -697,7 +697,7 @@ class WSProtocol(asyncio.Protocol):
             logger.debug("WebSocket %s disconnected (code=%s)",
                          self.scope["path"], exc.code)
         except Exception as exc:
-            if _is_expected_disconnect_error(exc):
+            if is_expected_disconnect_error(exc):
                 logger.debug("WebSocket %s disconnected: %s",
                              self.scope["path"], exc)
             else:

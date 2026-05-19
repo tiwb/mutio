@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import mutobj
 
@@ -20,6 +20,6 @@ class MCPToolSet(mutobj.Declaration):
 
     ``prefix`` 为 tool name 前缀，如 prefix="fs" 则方法 read 注册为 "fs_read"。
     """
-    prefix = ""  # type: str
-    view = None  # type: type[MCPView] | tuple[type[MCPView], ...] | None
-    path = ""  # type: str | tuple[str, ...]
+    prefix: ClassVar[str] = ""
+    view: ClassVar[type[MCPView] | tuple[type[MCPView], ...] | None] = None
+    path: ClassVar[str | tuple[str, ...]] = ""

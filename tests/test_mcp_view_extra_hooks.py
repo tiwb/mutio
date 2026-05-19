@@ -48,9 +48,9 @@ class HookedView(MCPView):
 def _call(view: MCPView, method: str, params: dict | None = None) -> dict:
     """同步调用 view 上的 JSON-RPC 方法，返回 result 字段。"""
     ext = _get_ext(view)
-    assert ext._dispatch is not None
+    assert ext.dispatch is not None
     msg = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
-    response = asyncio.run(ext._dispatch.handle(msg))
+    response = asyncio.run(ext.dispatch.handle(msg))
     assert response is not None, f"{method} returned no response"
     if "error" in response:
         raise RuntimeError(f"{method} error: {response['error']}")
@@ -79,7 +79,7 @@ class TestDefaultBehavior:
         # 标准 7 个方法 + 1 个 notification handler
         # 用 dispatch.handle 调用一个不存在的方法应当返回 method not found
         msg = {"jsonrpc": "2.0", "id": 1, "method": "myvendor/ping", "params": {}}
-        response = asyncio.run(ext._dispatch.handle(msg))
+        response = asyncio.run(ext.dispatch.handle(msg))
         assert response is not None
         assert "error" in response
         assert response["error"]["code"] == -32601  # Method not found

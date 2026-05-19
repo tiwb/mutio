@@ -81,3 +81,6 @@ class MCPError(Exception):
         self.message = message
         self.data = data
         super().__init__(f"MCP error {code}: {message}")
+
+
+from . import _client_impl as _client_impl  # noqa: E402, F401 — trigger @impl registration

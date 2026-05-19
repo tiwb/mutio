@@ -17,11 +17,13 @@
 from __future__ import annotations
 
 import inspect
-import json
+from mutio.codec import json
 import re
 import textwrap
 import typing
-from typing import Any
+from typing import Any, cast
+
+from mutio.codec.json import JsonValue
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +283,7 @@ def _annotation_to_schema(annotation: Any) -> dict[str, Any]:
 
 def _literal_to_schema(args: tuple[Any, ...]) -> dict[str, Any]:
     """Literal[...] → enum；同类型时附 type。"""
-    types = {type(a) for a in args}
+    types: set[type[Any]] = {type(a) for a in args}
     schema: dict[str, Any] = {"enum": list(args)}
     if len(types) == 1:
         t = next(iter(types))
@@ -301,7 +303,7 @@ def _add_null_type(schema: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(t, str):
         out["type"] = [t, "null"]
     elif isinstance(t, list) and "null" not in t:
-        out["type"] = list(t) + ["null"]
+        out["type"] = [*cast(list[Any], t), "null"]
     return out
 
 
@@ -346,8 +348,10 @@ def _is_json_compatible(value: Any) -> bool:
     if isinstance(value, (str, int, float, bool)):
         return True
     if isinstance(value, (list, tuple)):
+        value = cast(list[Any] | tuple[Any, ...], value)
         return all(_is_json_compatible(v) for v in value)
     if isinstance(value, dict):
+        value = cast(dict[Any, Any], value)
         return all(isinstance(k, str) and _is_json_compatible(v) for k, v in value.items())
     return False
 
@@ -419,7 +423,7 @@ def _parse_args_section(doc: str) -> dict[str, str]:
     return result
 
 
-def _parse_annotations_section(doc: str) -> dict[str, tuple[int, Any]]:
+def _parse_annotations_section(doc: str) -> dict[str, tuple[int, JsonValue]]:
     """提取 `Annotations:` 段 → {param_name: (line_no_1based, parsed_json)}。
 
     解析规则：
@@ -466,7 +470,6 @@ def _parse_annotations_section(doc: str) -> dict[str, tuple[int, Any]]:
             i += 1
             continue
 
-        indent = m.group(1)
         name = m.group(2)
         first_value = m.group(3)
         line_no = section_offset + i + 1  # 1-based 文档行号

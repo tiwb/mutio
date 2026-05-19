@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import mutobj
 
@@ -27,6 +27,6 @@ class MCPPromptSet(mutobj.Declaration):
 
     ``prefix`` 为 prompt name 前缀，如 prefix="code_" 则方法 review 注册为 "code_review"。
     """
-    prefix = ""  # type: str
-    view = None  # type: type[MCPView] | tuple[type[MCPView], ...] | None
-    path = ""  # type: str | tuple[str, ...]
+    prefix: ClassVar[str] = ""
+    view: ClassVar[type[MCPView] | tuple[type[MCPView], ...] | None] = None
+    path: ClassVar[str | tuple[str, ...]] = ""

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
+from mutio.codec import json
 import logging
-from typing import Any, cast
+from typing import Any
 
 import httpx
 
@@ -23,15 +23,15 @@ logger = logging.getLogger("mutio.mcp.client")
 # ---------------------------------------------------------------------------
 
 
-class _MCPClientExt(mutobj.Extension[MCPClient]):
+class MCPClientExt(mutobj.Extension[MCPClient]):
     """MCPClient 的运行时私有状态。"""
-    _http: httpx.AsyncClient | None = None
-    _session_id: str | None = None
-    _request_id: int = 0
+    http: httpx.AsyncClient | None = None
+    session_id: str | None = None
+    request_id: int = 0
 
 
-def _ext(client: MCPClient) -> _MCPClientExt:
-    return cast(_MCPClientExt, _MCPClientExt.get_or_create(client))
+def _ext(client: MCPClient) -> MCPClientExt:
+    return MCPClientExt.get_or_create(client)
 
 
 # ---------------------------------------------------------------------------
@@ -40,9 +40,9 @@ def _ext(client: MCPClient) -> _MCPClientExt:
 
 
 @mutobj.impl(MCPClient.connect)
-async def _connect(self: MCPClient) -> None:
+async def mcp_client_connect(self: MCPClient) -> None:
     ext = _ext(self)
-    ext._http = HttpClient.create(
+    ext.http = HttpClient.create(
         user_agent=f"mutio-mcp/{mutio.__version__}",
         timeout=self.timeout,
     )
@@ -50,53 +50,53 @@ async def _connect(self: MCPClient) -> None:
 
 
 @mutobj.impl(MCPClient.close)
-async def _close(self: MCPClient) -> None:
+async def mcp_client_close(self: MCPClient) -> None:
     ext = _ext(self)
-    if ext._http and ext._session_id:
+    if ext.http and ext.session_id:
         try:
-            await ext._http.delete(
+            await ext.http.delete(
                 self.url.rstrip("/"),
-                headers={"Mcp-Session-Id": ext._session_id},
+                headers={"Mcp-Session-Id": ext.session_id},
             )
         except Exception:
             pass
-    if ext._http:
-        await ext._http.aclose()
-        ext._http = None
+    if ext.http:
+        await ext.http.aclose()
+        ext.http = None
 
 
 @mutobj.impl(MCPClient.list_tools)
-async def _list_tools(self: MCPClient) -> list[dict[str, Any]]:
+async def mcp_client_list_tools(self: MCPClient) -> list[dict[str, Any]]:
     result = await _request(self, "tools/list")
     return result.get("tools", [])
 
 
 @mutobj.impl(MCPClient.call_tool)
-async def _call_tool(self: MCPClient, name: str, **arguments: Any) -> dict[str, Any]:
+async def mcp_client_call_tool(self: MCPClient, name: str, **arguments: Any) -> dict[str, Any]:
     result = await _request(self, "tools/call", {"name": name, "arguments": arguments})
     return result
 
 
 @mutobj.impl(MCPClient.list_resources)
-async def _list_resources(self: MCPClient) -> list[dict[str, Any]]:
+async def mcp_client_list_resources(self: MCPClient) -> list[dict[str, Any]]:
     result = await _request(self, "resources/list")
     return result.get("resources", [])
 
 
 @mutobj.impl(MCPClient.read_resource)
-async def _read_resource(self: MCPClient, uri: str) -> dict[str, Any]:
+async def mcp_client_read_resource(self: MCPClient, uri: str) -> dict[str, Any]:
     result = await _request(self, "resources/read", {"uri": uri})
     return result
 
 
 @mutobj.impl(MCPClient.list_prompts)
-async def _list_prompts(self: MCPClient) -> list[dict[str, Any]]:
+async def mcp_client_list_prompts(self: MCPClient) -> list[dict[str, Any]]:
     result = await _request(self, "prompts/list")
     return result.get("prompts", [])
 
 
 @mutobj.impl(MCPClient.get_prompt)
-async def _get_prompt(self: MCPClient, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+async def mcp_client_get_prompt(self: MCPClient, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
     params: dict[str, Any] = {"name": name}
     if arguments:
         params["arguments"] = arguments
@@ -105,12 +105,12 @@ async def _get_prompt(self: MCPClient, name: str, arguments: dict[str, Any] | No
 
 
 @mutobj.impl(MCPClient.ping)
-async def _ping(self: MCPClient) -> None:
+async def mcp_client_ping(self: MCPClient) -> None:
     await _request(self, "ping")
 
 
 @mutobj.impl(MCPClient.request)
-async def _request_method(
+async def mcp_client_request(
     self: MCPClient,
     method: str,
     params: dict[str, Any] | None = None,
@@ -147,14 +147,14 @@ async def _initialize(client: MCPClient) -> None:
 
 def _next_id(client: MCPClient) -> int:
     ext = _ext(client)
-    ext._request_id += 1
-    return ext._request_id
+    ext.request_id += 1
+    return ext.request_id
 
 
 async def _request(client: MCPClient, method: str, params: Any = None) -> Any:
     """发送 JSON-RPC request，返回 result。"""
     ext = _ext(client)
-    assert ext._http is not None
+    assert ext.http is not None
     msg_id = _next_id(client)
     payload: dict[str, Any] = {
         "jsonrpc": "2.0",
@@ -169,15 +169,15 @@ async def _request(client: MCPClient, method: str, params: Any = None) -> Any:
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
-    if ext._session_id:
-        headers["Mcp-Session-Id"] = ext._session_id
+    if ext.session_id:
+        headers["Mcp-Session-Id"] = ext.session_id
 
-    resp = await ext._http.post(url, json=payload, headers=headers)
+    resp = await ext.http.post(url, json=payload, headers=headers)
     resp.raise_for_status()
 
     session_id = resp.headers.get("mcp-session-id")
     if session_id:
-        ext._session_id = session_id
+        ext.session_id = session_id
 
     content_type = resp.headers.get("content-type", "")
 
@@ -197,17 +197,17 @@ async def _request(client: MCPClient, method: str, params: Any = None) -> Any:
 async def _notify(client: MCPClient, method: str, params: Any = None) -> None:
     """发送 JSON-RPC notification。"""
     ext = _ext(client)
-    assert ext._http is not None
+    assert ext.http is not None
     payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
     if params is not None:
         payload["params"] = params
 
     url = client.url.rstrip("/")
     headers: dict[str, str] = {"Content-Type": "application/json"}
-    if ext._session_id:
-        headers["Mcp-Session-Id"] = ext._session_id
+    if ext.session_id:
+        headers["Mcp-Session-Id"] = ext.session_id
 
-    resp = await ext._http.post(url, json=payload, headers=headers)
+    resp = await ext.http.post(url, json=payload, headers=headers)
     if resp.status_code not in (200, 202):
         logger.warning("Notification %s returned %d", method, resp.status_code)
 
@@ -228,12 +228,24 @@ def _parse_sse_response(text: str, expected_id: int) -> Any:
                     if isinstance(item, dict) and item.get("id") == expected_id:
                         if "error" in item:
                             err = item["error"]
-                            raise MCPError(err.get("code", -1), err.get("message", ""), err.get("data"))
+                            if isinstance(err, dict):
+                                raise MCPError(
+                                    json.get_as(err, "code", int, -1),
+                                    json.get_as(err, "message", str, ""),
+                                    err.get("data"),
+                                )
+                            raise MCPError(-1, str(err))
                         return item.get("result")
             elif isinstance(data, dict):
                 if "error" in data:
                     err = data["error"]
-                    raise MCPError(err.get("code", -1), err.get("message", ""), err.get("data"))
+                    if isinstance(err, dict):
+                        raise MCPError(
+                            json.get_as(err, "code", int, -1),
+                            json.get_as(err, "message", str, ""),
+                            err.get("data"),
+                        )
+                    raise MCPError(-1, str(err))
                 return data.get("result")
 
     raise MCPError(-1, "No response found in SSE stream")

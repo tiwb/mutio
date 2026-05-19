@@ -12,7 +12,7 @@ from mutio.net.server import (
     Response,
     StreamingResponse,
     WebSocketConnection,
-    _is_expected_disconnect_error,
+    is_expected_disconnect_error,
 )
 
 
@@ -282,4 +282,4 @@ class TestExpectedDisconnectError:
         ],
     )
     def test_classifies_expected_transport_disconnects(self, exc, expected):
-        assert _is_expected_disconnect_error(exc) is expected
+        assert is_expected_disconnect_error(exc) is expected

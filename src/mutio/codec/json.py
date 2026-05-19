@@ -27,13 +27,14 @@
 from __future__ import annotations
 
 import json as _stdjson
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable, TypeAlias, TypeVar
 
 __all__ = [
     "JsonPrimitive",
     "JsonValue",
     "JsonObject",
     "JsonArray",
+    "get_as",
     "loads",
     "dumps",
 ]
@@ -53,6 +54,25 @@ JsonPrimitive: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 JsonArray: TypeAlias = list[JsonValue]
+
+
+# ---------------------------------------------------------------------------
+# coerce — 从 JsonValue 安全提取指定类型
+# ---------------------------------------------------------------------------
+
+T = TypeVar("T")
+
+
+def get_as(obj: dict[str, JsonValue], key: str, typ: type[T], default: T) -> T:
+    """从 JSON 对象中安全取出 ``key`` 的值并校验类型。
+
+    用于替代 ``obj.get(key, default)``，一站式解决 key 缺失和类型不匹配::
+
+        code = get_as(err, "code", int, -1)
+        msg = get_as(err, "message", str, "")
+    """
+    val = obj.get(key)
+    return val if isinstance(val, typ) else default
 
 
 # ---------------------------------------------------------------------------
