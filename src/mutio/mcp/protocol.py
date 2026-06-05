@@ -33,7 +33,7 @@ class JsonRpcError(Exception):
     """JSON-RPC 错误。"""
     code: int
     message: str
-    data: Any = None
+    data: JsonValue = None
 
     def to_dict(self) -> JsonObject:
         d: JsonObject = {"code": self.code, "message": self.message}
@@ -182,7 +182,7 @@ def _error_response(msg_id: JsonValue, code: int, message: str,
     return {"jsonrpc": "2.0", "id": msg_id, "error": error}
 
 
-def make_request(msg_id: JsonValue, method: str, params: Any = None) -> JsonObject:
+def make_request(msg_id: JsonValue, method: str, params: JsonValue = None) -> JsonObject:
     """构造 JSON-RPC request。"""
     msg: JsonObject = {"jsonrpc": "2.0", "id": msg_id, "method": method}
     if params is not None:
@@ -190,7 +190,7 @@ def make_request(msg_id: JsonValue, method: str, params: Any = None) -> JsonObje
     return msg
 
 
-def make_notification(method: str, params: Any = None) -> JsonObject:
+def make_notification(method: str, params: JsonValue = None) -> JsonObject:
     """构造 JSON-RPC notification。"""
     msg: JsonObject = {"jsonrpc": "2.0", "method": method}
     if params is not None:

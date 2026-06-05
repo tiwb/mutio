@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from mutio.codec.json import JsonObject
+
 import mutobj
 
 
@@ -24,8 +26,8 @@ class MCPClient(mutobj.Declaration):
     client_name: str = "mutio"
     client_version: str = "0.1.0"
     timeout: float = 30.0
-    server_info: dict[str, Any] = mutobj.field(default_factory=dict)
-    server_capabilities: dict[str, Any] = mutobj.field(default_factory=dict)
+    server_info: JsonObject = mutobj.field(default_factory=JsonObject)
+    server_capabilities: JsonObject = mutobj.field(default_factory=JsonObject)
     server_instructions: str = ""
 
     async def connect(self) -> None:
@@ -36,15 +38,15 @@ class MCPClient(mutobj.Declaration):
         """关闭连接。"""
         ...
 
-    async def list_tools(self) -> list[dict[str, Any]]:
+    async def list_tools(self) -> list[JsonObject]:
         """获取 server 可用 tools。"""
         ...
 
-    async def call_tool(self, name: str, **arguments: Any) -> dict[str, Any]:
+    async def call_tool(self, name: str, **arguments: Any) -> JsonObject:
         """调用 tool。返回 ``{"content": [...], "isError": bool}``。"""
         ...
 
-    async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+    async def request(self, method: str, params: JsonObject | None = None) -> JsonObject:
         """通用 JSON-RPC 请求 — 直接转发到 server，返回 ``result`` 字段。
 
         服务端宣告自定义扩展方法时（如 ``pysandbox/namespaces.list``），
@@ -53,19 +55,19 @@ class MCPClient(mutobj.Declaration):
         """
         ...
 
-    async def list_resources(self) -> list[dict[str, Any]]:
+    async def list_resources(self) -> list[JsonObject]:
         """获取 server 可用 resources。"""
         ...
 
-    async def read_resource(self, uri: str) -> dict[str, Any]:
+    async def read_resource(self, uri: str) -> JsonObject:
         """读取 resource。"""
         ...
 
-    async def list_prompts(self) -> list[dict[str, Any]]:
+    async def list_prompts(self) -> list[JsonObject]:
         """获取 server 可用 prompts。"""
         ...
 
-    async def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def get_prompt(self, name: str, arguments: JsonObject | None = None) -> JsonObject:
         """获取 prompt。"""
         ...
 

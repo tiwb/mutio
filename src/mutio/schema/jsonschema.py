@@ -12,7 +12,9 @@ OpenAPI 等协议的 tool / endpoint 描述直接使用。
 from __future__ import annotations
 
 import typing
-from typing import Any, cast
+from typing import Any
+
+from mutio.codec.json import JsonObject
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +34,7 @@ _TYPE_MAP: dict[type, str] = {
 # ---------------------------------------------------------------------------
 
 
-def annotation_to_json_schema(annotation: Any) -> dict[str, Any]:
+def annotation_to_json_schema(annotation: Any) -> JsonObject:
     """Python 类型注解 → JSON Schema 片段。
 
     不包含参数名、默认值、description——这些由调用方从 FunctionInfo 自行组装。
@@ -110,10 +112,10 @@ def annotation_to_json_schema(annotation: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _literal_to_schema(args: tuple[Any, ...]) -> dict[str, Any]:
+def _literal_to_schema(args: tuple[Any, ...]) -> JsonObject:
     """Literal[...] → enum；同类型时附 type。"""
     types: set[type[Any]] = {type(a) for a in args}
-    schema: dict[str, Any] = {"enum": list(args)}
+    schema: JsonObject = {"enum": list(args)}
     if len(types) == 1:
         t = next(iter(types))
         if t in _TYPE_MAP:
@@ -123,7 +125,7 @@ def _literal_to_schema(args: tuple[Any, ...]) -> dict[str, Any]:
     return schema
 
 
-def _add_null_type(schema: dict[str, Any]) -> dict[str, Any]:
+def _add_null_type(schema: JsonObject) -> JsonObject:
     """在 schema 上追加 null 类型支持。"""
     out = dict(schema)
     t = out.get("type")
@@ -132,7 +134,7 @@ def _add_null_type(schema: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(t, str):
         out["type"] = [t, "null"]
     elif isinstance(t, list) and "null" not in t:
-        out["type"] = [*cast(list[Any], t), "null"]
+        out["type"] = [*t, "null"]
     return out
 
 

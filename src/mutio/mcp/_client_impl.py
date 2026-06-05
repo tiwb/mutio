@@ -6,6 +6,8 @@ from mutio.codec import json
 import logging
 from typing import Any
 
+from mutio.codec.json import JsonObject, JsonValue
+
 import httpx
 
 import mutio
@@ -66,38 +68,38 @@ async def mcp_client_close(self: MCPClient) -> None:
 
 
 @mutobj.impl(MCPClient.list_tools)
-async def mcp_client_list_tools(self: MCPClient) -> list[dict[str, Any]]:
+async def mcp_client_list_tools(self: MCPClient) -> list[JsonObject]:
     result = await _request(self, "tools/list")
-    return result.get("tools", [])
+    return json.get_field(result, "tools", list[JsonObject], default=[])
 
 
 @mutobj.impl(MCPClient.call_tool)
-async def mcp_client_call_tool(self: MCPClient, name: str, **arguments: Any) -> dict[str, Any]:
+async def mcp_client_call_tool(self: MCPClient, name: str, **arguments: Any) -> JsonObject:
     result = await _request(self, "tools/call", {"name": name, "arguments": arguments})
     return result
 
 
 @mutobj.impl(MCPClient.list_resources)
-async def mcp_client_list_resources(self: MCPClient) -> list[dict[str, Any]]:
+async def mcp_client_list_resources(self: MCPClient) -> list[JsonObject]:
     result = await _request(self, "resources/list")
-    return result.get("resources", [])
+    return json.get_field(result, "resources", list[JsonObject], default=[])
 
 
 @mutobj.impl(MCPClient.read_resource)
-async def mcp_client_read_resource(self: MCPClient, uri: str) -> dict[str, Any]:
+async def mcp_client_read_resource(self: MCPClient, uri: str) -> JsonObject:
     result = await _request(self, "resources/read", {"uri": uri})
     return result
 
 
 @mutobj.impl(MCPClient.list_prompts)
-async def mcp_client_list_prompts(self: MCPClient) -> list[dict[str, Any]]:
+async def mcp_client_list_prompts(self: MCPClient) -> list[JsonObject]:
     result = await _request(self, "prompts/list")
-    return result.get("prompts", [])
+    return json.get_field(result, "prompts", list[JsonObject], default=[])
 
 
 @mutobj.impl(MCPClient.get_prompt)
-async def mcp_client_get_prompt(self: MCPClient, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-    params: dict[str, Any] = {"name": name}
+async def mcp_client_get_prompt(self: MCPClient, name: str, arguments: JsonObject | None = None) -> JsonObject:
+    params: JsonObject = {"name": name}
     if arguments:
         params["arguments"] = arguments
     result = await _request(self, "prompts/get", params)
@@ -113,8 +115,8 @@ async def mcp_client_ping(self: MCPClient) -> None:
 async def mcp_client_request(
     self: MCPClient,
     method: str,
-    params: dict[str, Any] | None = None,
-) -> Any:
+    params: JsonObject | None = None,
+) -> JsonObject:
     return await _request(self, method, params)
 
 
@@ -134,13 +136,13 @@ async def _initialize(client: MCPClient) -> None:
         },
     })
 
-    client.server_info = result.get("serverInfo", {})
-    client.server_capabilities = result.get("capabilities", {})
-    client.server_instructions = result.get("instructions", "") or ""
+    client.server_info = json.get_field(result, "serverInfo", JsonObject, default={})
+    client.server_capabilities = json.get_field(result, "capabilities", JsonObject, default={})
+    client.server_instructions = json.get_field(result, "instructions", str, default="")
     logger.info("MCP initialized: %s v%s (protocol %s)",
                 client.server_info.get("name"),
                 client.server_info.get("version"),
-                result.get("protocolVersion"))
+                json.get_field(result, "protocolVersion", str, default=""))
 
     await _notify(client, "notifications/initialized")
 
@@ -151,12 +153,12 @@ def _next_id(client: MCPClient) -> int:
     return ext.request_id
 
 
-async def _request(client: MCPClient, method: str, params: Any = None) -> Any:
+async def _request(client: MCPClient, method: str, params: JsonValue = None) -> JsonObject:
     """发送 JSON-RPC request，返回 result。"""
     ext = _ext(client)
     assert ext.http is not None
     msg_id = _next_id(client)
-    payload: dict[str, Any] = {
+    payload: JsonObject = {
         "jsonrpc": "2.0",
         "id": msg_id,
         "method": method,
@@ -184,21 +186,22 @@ async def _request(client: MCPClient, method: str, params: Any = None) -> Any:
     if "text/event-stream" in content_type:
         return _parse_sse_response(resp.text, msg_id)
     else:
-        data = resp.json()
+        data = json.narrow_value(resp.json(), JsonObject)
         if "error" in data:
+            err = json.get_field(data, "error", JsonObject)
             raise MCPError(
-                data["error"].get("code", -1),
-                data["error"].get("message", "Unknown error"),
-                data["error"].get("data"),
+                json.get_field(err, "code", int, default=-1),
+                json.get_field(err, "message", str, default="Unknown error"),
+                err.get("data"),
             )
-        return data.get("result")
+        return json.get_field(data, "result", JsonObject)
 
 
-async def _notify(client: MCPClient, method: str, params: Any = None) -> None:
+async def _notify(client: MCPClient, method: str, params: JsonValue = None) -> None:
     """发送 JSON-RPC notification。"""
     ext = _ext(client)
     assert ext.http is not None
-    payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+    payload: JsonObject = {"jsonrpc": "2.0", "method": method}
     if params is not None:
         payload["params"] = params
 
@@ -212,7 +215,7 @@ async def _notify(client: MCPClient, method: str, params: Any = None) -> None:
         logger.warning("Notification %s returned %d", method, resp.status_code)
 
 
-def _parse_sse_response(text: str, expected_id: int) -> Any:
+def _parse_sse_response(text: str, expected_id: int) -> JsonObject:
     """解析 SSE 响应，提取 JSON-RPC result。"""
     for line in text.split("\n"):
         line = line.strip()
@@ -223,29 +226,20 @@ def _parse_sse_response(text: str, expected_id: int) -> Any:
             except json.JSONDecodeError:
                 continue
 
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("id") == expected_id:
-                        if "error" in item:
-                            err = item["error"]
-                            if isinstance(err, dict):
-                                raise MCPError(
-                                    json.get_as(err, "code", int, -1),
-                                    json.get_as(err, "message", str, ""),
-                                    err.get("data"),
-                                )
-                            raise MCPError(-1, str(err))
-                        return item.get("result")
-            elif isinstance(data, dict):
-                if "error" in data:
-                    err = data["error"]
-                    if isinstance(err, dict):
-                        raise MCPError(
-                            json.get_as(err, "code", int, -1),
-                            json.get_as(err, "message", str, ""),
-                            err.get("data"),
-                        )
-                    raise MCPError(-1, str(err))
-                return data.get("result")
+            items = json.narrow_value(data, list[JsonObject], fallback=None)
+            if items is None:
+                items = [json.narrow_value(data, JsonObject)]
+
+            for item in items:
+                if item.get("id") != expected_id:
+                    continue
+                if "error" in item:
+                    err = json.narrow_value(item["error"], JsonObject)
+                    raise MCPError(
+                        json.get_field(err, "code", int, default=-1),
+                        json.get_field(err, "message", str, default=""),
+                        err.get("data"),
+                    )
+                return json.get_field(item, "result", JsonObject)
 
     raise MCPError(-1, "No response found in SSE stream")

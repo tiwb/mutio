@@ -68,7 +68,7 @@ class FunctionInfo:
     param_order: list[str]          # 参数顺序（与签名一致）
 
 
-def extract_function_info(fn: Callable, *, doc: str | None = None) -> FunctionInfo:
+def extract_function_info(fn: Callable[..., Any], *, doc: str | None = None) -> FunctionInfo:
     """从 Python 函数提取结构化接口描述。
 
     组合 inspect.signature + Google-style docstring 解析。

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, ClassVar, Sequence
 
 import mutobj
+from ..codec.json import JsonValue
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ class Request(mutobj.Declaration):
         """读取原始请求体。"""
         ...
 
-    async def json(self) -> Any:
+    async def json(self) -> JsonValue:
         """读取请求体并解析为 JSON。"""
         ...
 
@@ -57,9 +58,9 @@ class JSONResponse(Response):
     通过 ``@mutobj.impl(JSONResponse.render)`` 注入新实现。
     """
 
-    def __init__(self, content: Any, status_code: int = 200) -> None: ...
+    def __init__(self, content: JsonValue, status_code: int = 200) -> None: ...
 
-    def render(self, content: Any) -> bytes:
+    def render(self, content: JsonValue) -> bytes:
         """将 content 序列化为 bytes。子类/扩展通过 @impl 覆盖。"""
         ...
 
@@ -158,11 +159,11 @@ class WebSocketConnection(mutobj.Declaration):
         """
         ...
 
-    async def receive_json(self) -> Any:
+    async def receive_json(self) -> JsonValue:
         """接收并解析 JSON 消息。"""
         ...
 
-    async def send_json(self, data: Any) -> None: ...
+    async def send_json(self, data: JsonValue) -> None: ...
     async def send_bytes(self, data: bytes) -> None: ...
     async def close(self, code: int = 1000, reason: str = "") -> None: ...
 

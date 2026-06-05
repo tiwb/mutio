@@ -11,9 +11,9 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from mutio.codec import json
+from mutio.codec.json import JsonValue
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ def extract_description(doc: str) -> str:
     return "\n".join(main_lines).strip()
 
 
-def parse_annotations_section(doc: str) -> dict[str, tuple[int, Any]]:
+def parse_annotations_section(doc: str) -> dict[str, tuple[int, JsonValue]]:
     """提取 `Annotations:` 段 → {param_name: (line_no_1based, parsed_json)}。
 
     解析规则：
@@ -168,7 +168,7 @@ def parse_annotations_section(doc: str) -> dict[str, tuple[int, Any]]:
     section_offset = start  # 段内行 0 对应原文档行号 start (0-based) → 1-based: start+1
 
     # 解析：以 "    name:" 起始的行作为条目起点
-    result: dict[str, tuple[int, Any]] = {}
+    result: dict[str, tuple[int, JsonValue]] = {}
     item_re = re.compile(r"^( {4,})(\w+):\s*(.*)$")
 
     i = 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mutio.codec import json
+from mutio.codec.json import JsonValue
 import logging
 import mimetypes
 import re
@@ -80,7 +81,7 @@ def _read_file_response(
 
 
 @mutobj.impl(JSONResponse.__init__)
-def json_response_init(self: JSONResponse, content: Any, status_code: int = 200) -> None:
+def json_response_init(self: JSONResponse, content: JsonValue, status_code: int = 200) -> None:
     Response.__init__(
         self,
         status_code=status_code,
@@ -90,7 +91,7 @@ def json_response_init(self: JSONResponse, content: Any, status_code: int = 200)
 
 
 @mutobj.impl(JSONResponse.render)
-def json_response_render(self: JSONResponse, content: Any) -> bytes:
+def json_response_render(self: JSONResponse, content: JsonValue) -> bytes:
     return json.dumps(content, ensure_ascii=False).encode("utf-8")
 
 
@@ -203,7 +204,7 @@ async def request_body(self: Request) -> bytes:
 
 
 @mutobj.impl(Request.json)
-async def request_json(self: Request) -> Any:
+async def request_json(self: Request) -> JsonValue:
     raw = await self.body()
     return json.loads(raw)
 
@@ -226,7 +227,7 @@ async def web_socket_connection_receive(self: WebSocketConnection) -> dict[str, 
 
 
 @mutobj.impl(WebSocketConnection.receive_json)
-async def web_socket_connection_receive_json(self: WebSocketConnection) -> Any:
+async def web_socket_connection_receive_json(self: WebSocketConnection) -> JsonValue:
     ext = WebSocketExt.get_or_create(self)
     while True:
         msg = await ext.receive()
@@ -237,7 +238,7 @@ async def web_socket_connection_receive_json(self: WebSocketConnection) -> Any:
 
 
 @mutobj.impl(WebSocketConnection.send_json)
-async def web_socket_connection_send_json(self: WebSocketConnection, data: Any) -> None:
+async def web_socket_connection_send_json(self: WebSocketConnection, data: JsonValue) -> None:
     ext = WebSocketExt.get_or_create(self)
     await ext.send({
         "type": "websocket.send",

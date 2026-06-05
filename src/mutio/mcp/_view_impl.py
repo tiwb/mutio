@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import mutobj
 
-from mutio.codec.json import JsonValue
+from mutio.codec.json import JsonObject, JsonValue
 from mutio.net.server import Request, Response
 from mutio.mcp.toolset import MCPToolSet
 from mutio.mcp.promptset import MCPPromptSet
@@ -98,10 +98,10 @@ class MCPToolProvider:
                         tool_name = f"{prefix}{name}" if prefix else name
                         self._tools[tool_name] = (instance, name)
 
-    def list_tools(self) -> list[dict[str, Any]]:
+    def list_tools(self) -> list[JsonObject]:
         """从类型注解 + docstring 自动生成 tool schema。"""
         self.refresh()
-        result: list[dict[str, Any]] = []
+        result: list[JsonObject] = []
         for tool_name, (instance, method_name) in self._tools.items():
             method = getattr(instance, method_name)
             # 优先使用声明的 docstring，避免被 @impl 覆盖
@@ -136,7 +136,7 @@ class MCPToolProvider:
 # ---------------------------------------------------------------------------
 
 
-def _infer_prompt_arguments(fn: Any) -> list[dict[str, Any]]:
+def _infer_prompt_arguments(fn: Any) -> list[JsonObject]:
     """从方法签名提取 MCP prompt arguments。
 
     MCP 协议限制 prompt 参数只能是字符串。方法可以有默认值（→ required=False）。
@@ -149,7 +149,7 @@ def _infer_prompt_arguments(fn: Any) -> list[dict[str, Any]]:
         hints = typing.get_type_hints(fn)
     except Exception:
         hints = {}
-    result: list[dict[str, Any]] = []
+    result: list[JsonObject] = []
     for name, param in sig.parameters.items():
         if name in ("self", "cls"):
             continue
@@ -164,7 +164,7 @@ def _infer_prompt_arguments(fn: Any) -> list[dict[str, Any]]:
     return result
 
 
-def _normalize_prompt_result(result: Any) -> list[PromptMessage]:
+def _normalize_prompt_result(result: object) -> list[PromptMessage]:
     """归一化 prompt 方法返回值为 list[PromptMessage]。
 
     支持三种形态：
@@ -182,7 +182,7 @@ def _normalize_prompt_result(result: Any) -> list[PromptMessage]:
             return [m for m in items if isinstance(m, PromptMessage)]
     raise TypeError(
         "Prompt method must return str | PromptMessage | list[PromptMessage], "
-        f"got {type(result).__name__}"  # pyright: ignore[reportUnknownArgumentType]
+        f"got {result!r}"
     )
 
 
@@ -236,10 +236,10 @@ class MCPPromptProvider:
                         prompt_name = f"{prefix}{name}" if prefix else name
                         self._prompts[prompt_name] = (instance, name)
 
-    def list_prompts(self) -> list[dict[str, Any]]:
+    def list_prompts(self) -> list[JsonObject]:
         """生成 prompts/list 返回条目：name / description / arguments。"""
         self.refresh()
-        result: list[dict[str, Any]] = []
+        result: list[JsonObject] = []
         for prompt_name, (instance, method_name) in self._prompts.items():
             method = getattr(instance, method_name)
             doc = mutobj.get_declaration_doc(type(instance), method_name)
@@ -253,7 +253,7 @@ class MCPPromptProvider:
             })
         return result
 
-    async def call_prompt(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def call_prompt(self, name: str, args: dict[str, Any]) -> JsonObject:
         """执行 prompt 方法并返回 prompts/get 响应体。"""
         self.refresh()
         if name not in self._prompts:
@@ -267,7 +267,7 @@ class MCPPromptProvider:
         doc = mutobj.get_declaration_doc(type(instance), method_name)
         if doc is None:
             doc = method.__doc__ or ""
-        response: dict[str, Any] = {"messages": [m.to_dict() for m in messages]}
+        response: JsonObject = {"messages": [m.to_dict() for m in messages]}
         if doc:
             response["description"] = doc
         return response
@@ -312,7 +312,7 @@ def _setup_handlers(ext: MCPViewExt, view: MCPView) -> None:
     tp = ext.tool_provider
     pp = ext.prompt_provider
 
-    async def _handle_initialize(params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_initialize(params: dict[str, Any]) -> JsonObject:
         tools = tp.list_tools()
         prompts = pp.list_prompts()
         capabilities = ServerCapabilities(
@@ -338,13 +338,13 @@ def _setup_handlers(ext: MCPViewExt, view: MCPView) -> None:
     async def _handle_initialized(params: dict[str, Any]) -> None:
         pass
 
-    async def _handle_ping(params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_ping(params: dict[str, Any]) -> JsonObject:
         return {}
 
-    async def _handle_tools_list(params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_tools_list(params: dict[str, Any]) -> JsonObject:
         return {"tools": tp.list_tools()}
 
-    async def _handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_tools_call(params: dict[str, Any]) -> JsonObject:
         tool_name = params.get("name")
         if not tool_name:
             raise JsonRpcError(INVALID_PARAMS, "Missing tool name")
@@ -358,10 +358,10 @@ def _setup_handlers(ext: MCPViewExt, view: MCPView) -> None:
             result = ToolResult.error(str(e))
         return result.to_dict()
 
-    async def _handle_prompts_list(params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_prompts_list(params: dict[str, Any]) -> JsonObject:
         return {"prompts": pp.list_prompts()}
 
-    async def _handle_prompts_get(params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_prompts_get(params: dict[str, Any]) -> JsonObject:
         prompt_name = params.get("name")
         if not prompt_name:
             raise JsonRpcError(INVALID_PARAMS, "Missing prompt name")
@@ -489,7 +489,7 @@ async def mcp_view_delete(self: MCPView, request: Request) -> Response:
 
 
 @mutobj.impl(MCPView.extra_capabilities)
-def mcp_view_extra_capabilities(self: MCPView) -> dict[str, Any]:
+def mcp_view_extra_capabilities(self: MCPView) -> JsonObject:
     return {}
 
 

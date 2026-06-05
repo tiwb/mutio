@@ -20,23 +20,31 @@
 类型别名采用 `TypeAlias` + 字符串前向引用（PEP 613 + PEP 563），
 兼容 Python 3.11+。升级到 3.12+ 时可平滑迁移到 PEP 695 `type` 语句。
 
-为什么不放在 `mutio/mcp/`：`net/_server_impl.py` 也是消费者，归入 `mcp/`
-会让 `net` 反向依赖 `mcp`，破坏现有依赖方向。
 """
 
 from __future__ import annotations
 
 import json as _stdjson
-from typing import Any, Callable, TypeAlias, TypeVar
+import typing
+from collections.abc import Mapping, Sequence
+from types import UnionType
+from typing import Union, Any, Callable, ForwardRef, TypeAlias, TypeVar, get_args, get_origin, overload
+from typing_extensions import TypeForm
 
 __all__ = [
     "JsonPrimitive",
     "JsonValue",
     "JsonObject",
     "JsonArray",
-    "get_as",
+    "get_field",
+    "get_element",
+    "narrow_value",
+    "check_type",
     "loads",
     "dumps",
+    "JSONDecodeError",
+    "JSONDecoder",
+    "JSONEncoder",
 ]
 
 # 透传标准库类型/异常，让 `from mutio.codec import json` 的调用方
@@ -51,28 +59,192 @@ JSONEncoder = _stdjson.JSONEncoder
 # ---------------------------------------------------------------------------
 
 JsonPrimitive: TypeAlias = str | int | float | bool | None
-JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
+# 联合体用协变的 Mapping/Sequence，这样 list[dict[str, JsonValue]] ⊆ JsonValue（绕过 list 不变性）
+JsonValue: TypeAlias = JsonPrimitive | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
+# 便捷别名保持 dict/list，保证构建侧可原地修改
 JsonObject: TypeAlias = dict[str, JsonValue]
 JsonArray: TypeAlias = list[JsonValue]
 
 
 # ---------------------------------------------------------------------------
-# coerce — 从 JsonValue 安全提取指定类型
+# narrowing helpers — 从 JsonValue 安全提取/收窄指定类型
 # ---------------------------------------------------------------------------
 
 T = TypeVar("T")
+_MISSING = object()
 
 
-def get_as(obj: dict[str, JsonValue], key: str, typ: type[T], default: T) -> T:
-    """从 JSON 对象中安全取出 ``key`` 的值并校验类型。
+@overload
+def get_field(obj: JsonValue, key: str, typ: TypeForm[T], /) -> T: ...
 
-    用于替代 ``obj.get(key, default)``，一站式解决 key 缺失和类型不匹配::
 
-        code = get_as(err, "code", int, -1)
-        msg = get_as(err, "message", str, "")
+@overload
+def get_field(obj: JsonValue, key: str, typ: TypeForm[T], /, *, default: T) -> T: ...
+
+
+@overload
+def get_field(obj: JsonValue, key: str, typ: TypeForm[T], /, *, fallback: T) -> T: ...
+
+
+@overload
+def get_field(obj: JsonValue, key: str, typ: TypeForm[T], /, *, default: T, fallback: T) -> T: ...
+
+
+def get_field(
+    obj: JsonValue,
+    key: str,
+    typ: TypeForm[T],
+    /,
+    *,
+    default: T = _MISSING,
+    fallback: T = _MISSING,
+) -> T:
+    """从 JSON 值按字段取值，并在返回前做递归类型窄化。
+
+    - ``obj`` 不是 dict 或 ``key`` 缺失时：返回 ``default`` 或抛 ``KeyError``
+    - 命中字段但类型不匹配时：返回 ``fallback`` 或抛 ``TypeError``
     """
-    val = obj.get(key)
-    return val if isinstance(val, typ) else default
+    if not isinstance(obj, dict) or key not in obj:
+        if default is not _MISSING:
+            return default
+        raise KeyError(key)
+    value = obj[key]
+    # JSON API 常见 null 语义等同于"无值"：值为 None 且期望类型不包含 None
+    # 时回退到 default（与 key 缺失一致），而非抛 TypeError
+    if value is None and default is not _MISSING and not check_type(None, typ):
+        return default
+    return _coerce_value(value, typ, prefix=f"Key {key!r}", fallback=fallback)
+
+
+@overload
+def get_element(arr: JsonValue, index: int, typ: TypeForm[T], /) -> T: ...
+
+
+@overload
+def get_element(arr: JsonValue, index: int, typ: TypeForm[T], /, *, default: T) -> T: ...
+
+
+@overload
+def get_element(arr: JsonValue, index: int, typ: TypeForm[T], /, *, fallback: T) -> T: ...
+
+
+@overload
+def get_element(arr: JsonValue, index: int, typ: TypeForm[T], /, *, default: T, fallback: T) -> T: ...
+
+
+def get_element(
+    arr: JsonValue,
+    index: int,
+    typ: TypeForm[T],
+    /,
+    *,
+    default: T = _MISSING,
+    fallback: T = _MISSING,
+) -> T:
+    """从 JSON 值按索引取元素，并在返回前做递归类型窄化。"""
+    if not isinstance(arr, list):
+        if default is not _MISSING:
+            return default
+        raise IndexError(f"Index {index}: expected list, got {type(arr).__name__}")
+    try:
+        value = arr[index]
+    except IndexError:
+        if default is not _MISSING:
+            return default
+        raise
+    return _coerce_value(value, typ, prefix=f"Index {index}", fallback=fallback)
+
+
+@overload
+def narrow_value(value: JsonValue, typ: TypeForm[T], /) -> T: ...
+
+@overload
+def narrow_value(value: JsonValue, typ: TypeForm[T], /, *, fallback: T) -> T: ...
+
+def narrow_value(
+    value: JsonValue,
+    typ: TypeForm[T],
+    /,
+    *,
+    fallback: T = _MISSING,
+) -> T:
+    """对已有 ``JsonValue`` 做递归类型窄化。"""
+    return _coerce_value(value, typ, prefix=None, fallback=fallback)
+
+
+def _coerce_value(
+    value: JsonValue,
+    typ: TypeForm[T],
+    /,
+    *,
+    prefix: str | None,
+    fallback: T = _MISSING,
+) -> T:
+    if check_type(value, typ):
+        return typing.cast(T, value)
+    if fallback is not _MISSING:
+        return fallback
+    if prefix is None:
+        raise TypeError(f"Expected {typ}, got {type(value).__name__}")
+    else:
+        raise TypeError(f"{prefix}: expected {typ}, got {type(value).__name__}")
+
+
+
+def check_type(value: JsonValue, typ: TypeForm[Any], /) -> bool:
+    """递归检查 JSON 值是否匹配指定类型结构（shape）。
+
+    前设：所有 value 天然是 JsonValue。
+
+    支持基础类型（str, int, float, bool, NoneType）、容器泛型
+    （list[X], dict[K, V]）、Union。JsonValue / Any 作为终端类型
+    直接通过，ForwardRef 和字符串前向引用宽容通过。
+
+    适用场景：
+    - 从 JSON 配置中提取值后验证结构
+    - 运行时类型守卫，确保数据符合预期 shape
+
+    示例::
+
+        check_type(["a", "b"], list[str])          # True
+        check_type(["a", 1], list[str])            # False
+        check_type({"a": 1}, dict[str, Any])       # True
+        check_type(42, JsonValue)                  # True（终端短路）
+    """
+    # 终端类型
+    if typ is JsonValue or typ is Any:  # pyright: ignore[reportUnnecessaryComparison]
+        return True
+    # 无法执行的类型检查：ForwardRef / 字符串前向引用
+    if isinstance(typ, (ForwardRef, str)):
+        return True
+    origin = get_origin(typ)
+    if origin is not None:
+        if origin in (Union, UnionType):
+            return any(check_type(value, arg) for arg in get_args(typ))
+        args = get_args(typ)
+        # 用字面量 isinstance 以便 pyright 窄化（origin 是变量时 pyright 无法窄化）
+        if origin is list:
+            if not isinstance(value, list):
+                return False
+            return all(check_type(v, args[0]) for v in value) if args else True
+        if origin is dict:
+            if not isinstance(value, dict):
+                return False
+            return all(
+                check_type(k, args[0]) and check_type(v, args[1])
+                for k, v in value.items()
+            ) if args else True
+        if not isinstance(value, origin):
+            return False
+        if not args:
+            return True
+        return True
+    # 兼容 JSON round-trip: int 值可无损赋给 float 字段
+    # （如 dataclass float 字段默认值为 int 字面量 0，json.dumps 输出 "0"，
+    #  json.loads 读回 int 0，无法通过 float isinstance 检查）
+    if typ is float and isinstance(value, int):
+        return True
+    return isinstance(value, typing.cast(type[Any], typ))
 
 
 # ---------------------------------------------------------------------------

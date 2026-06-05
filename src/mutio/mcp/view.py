@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
+from mutio.codec.json import JsonObject
 from mutio.net.server import View, Request, Response, StreamingResponse
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ class MCPView(View):
     async def post(self, request: Request) -> Response | StreamingResponse: ...
     async def delete(self, request: Request) -> Response: ...
 
-    def extra_capabilities(self) -> dict[str, Any]:
+    def extra_capabilities(self) -> JsonObject:
         """返回追加进 ``initialize`` 响应 ``capabilities`` 的字段。
 
         默认返回空字典；子类覆盖以宣告 vendor 扩展能力。

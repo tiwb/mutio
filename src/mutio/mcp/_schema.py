@@ -7,7 +7,7 @@
 - docstring `Annotations:` 段（JSON 一次到底）→ 其他 mcp schema 字段（minimum / pattern / format / ...）
 
 入口：
-- `function_to_mcp_input_schema(fn)` → dict[str, Any]
+- `function_to_mcp_input_schema(fn)` → JsonObject
 - `function_to_mcp_description(fn)` → str
 
 实现遵循 `mutio/docs/specifications/feature-mcp-schema-docstring-source.md`。
@@ -20,8 +20,9 @@ from __future__ import annotations
 import inspect
 import textwrap
 import typing
-from typing import Any, cast
+from typing import Any, Callable
 
+from mutio.codec.json import JsonObject, JsonValue
 from mutio.schema import (
     ParamInfo,
     annotation_to_json_schema,
@@ -36,7 +37,7 @@ from mutio.schema import (
 # ---------------------------------------------------------------------------
 
 
-def function_to_mcp_input_schema(fn: Any, doc: str | None = None) -> dict[str, Any]:
+def function_to_mcp_input_schema(fn: Callable[..., Any], doc: str | None = None) -> JsonObject:
     """从 python 函数推导 mcp tool 的 inputSchema。
 
     Args:
@@ -49,13 +50,13 @@ def function_to_mcp_input_schema(fn: Any, doc: str | None = None) -> dict[str, A
     func_info = extract_function_info(fn, doc=doc)
 
     # 阶段 1：从 FunctionInfo 构建 properties / required
-    properties: dict[str, Any] = {}
+    properties: dict[str, JsonObject] = {}
     required: list[str] = []
 
     for name in func_info.param_order:
         param = func_info.params[name]
 
-        prop: dict[str, Any] = (
+        prop: JsonObject = (
             {} if not param.has_annotation
             else annotation_to_json_schema(param.annotation)
         )
@@ -105,7 +106,7 @@ def function_to_mcp_input_schema(fn: Any, doc: str | None = None) -> dict[str, A
                 )
         properties[name].update(parsed)
 
-    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    schema: JsonObject = {"type": "object", "properties": properties}
     if required:
         schema["required"] = required
     else:
@@ -113,7 +114,7 @@ def function_to_mcp_input_schema(fn: Any, doc: str | None = None) -> dict[str, A
     return schema
 
 
-def function_to_mcp_description(fn: Any, doc: str | None = None) -> str:
+def function_to_mcp_description(fn: Callable[..., Any], doc: str | None = None) -> str:
     """提取 docstring 主段作为 tool description。
 
     主段 = 首段到任一 Google-style 段头之前的全部文本，去除前后空白。
@@ -161,18 +162,16 @@ def _forbidden_keys(param: ParamInfo) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _is_json_compatible(value: Any) -> bool:
+def _is_json_compatible(value: JsonValue) -> bool:
     """判断 default 值能否原样写入 schema。"""
     if value is None:
         return True
     if isinstance(value, (str, int, float, bool)):
         return True
     if isinstance(value, (list, tuple)):
-        value = cast(list[Any] | tuple[Any, ...], value)
         return all(_is_json_compatible(v) for v in value)
     if isinstance(value, dict):
-        value = cast(dict[Any, Any], value)
-        return all(isinstance(k, str) and _is_json_compatible(v) for k, v in value.items())
+        return all(_is_json_compatible(v) for v in value.values())
     return False
 
 
