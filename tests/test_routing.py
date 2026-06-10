@@ -204,10 +204,10 @@ class _Counter:
 
 class _MultiPathList(View):
     path = ("/m-list-a", "/m-list-b")
+    hits: int = 0
 
     async def get(self, request: Request) -> Response:
-        # 用闭包外的类变量,但更直接:实例属性
-        self.hits = getattr(self, "hits", 0) + 1
+        self.hits += 1
         return Response(status_code=200, body=str(self.hits).encode())
 
 

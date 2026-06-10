@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import socket as _socket
 from pathlib import Path
-from typing import Any, AsyncIterator, ClassVar, Sequence
+from typing import Any, AsyncIterator, Sequence
 
 import mutobj
 from ..codec.json import JsonValue
@@ -187,8 +187,7 @@ class Server(mutobj.Declaration):
     base_path: str = ""
     redirect_slashes: bool = True
     """精确路径未命中时,自动尝试加/去 trailing slash 并 307 重定向(对齐 Starlette/FastAPI 默认)。"""
-    # ClassVar 避免被 DeclarationMeta 转换为 AttributeDescriptor
-    views: ClassVar[tuple[type, ...] | None] = None
+    views: tuple[type, ...] | None = None
 
     async def route(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         """ASGI 入口 — 自动发现 View/WebSocketView 并路径匹配分发。"""
