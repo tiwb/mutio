@@ -51,7 +51,7 @@ class TestGetDeclarationDoc:
             # _get_declaration_doc 取回的是原始声明的 docstring
             assert get_declaration_doc(Svc4, "greet") == "Original greeting doc."
         finally:
-            mutobj.unregister_module_impls("test_mcp_doc_impl")
+            mutobj.impl_unregister("test_mcp_doc_impl")
 
     def test_returns_none_for_non_declaration_class(self):
         """对非 Declaration 类查询，返回 None"""

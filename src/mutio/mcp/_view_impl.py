@@ -42,11 +42,11 @@ class MCPToolProvider:
         self._gen: int = -1
         self._tools: dict[str, tuple[MCPToolSet, str]] = {}
         self._target_view = target_view
-        # 缓存 target_view 的 path（从实例获取，避免 AttributeDescriptor）
+        # 缓存 target_view 的 path（类级读取默认值，避免创建实例）
         # MCPView.path 可能是 str 或 tuple,统一归一化为 tuple 简化比较
         self._target_paths: tuple[str, ...] = ()
         if target_view is not None:
-            tv_path = target_view().path
+            tv_path = mutobj.field_info(target_view.path).make_default()
             self._target_paths = (tv_path,) if isinstance(tv_path, str) else tuple(tv_path)
 
     def _match_view(self, toolset: MCPToolSet) -> bool:
@@ -195,7 +195,7 @@ class MCPPromptProvider:
         self._target_view = target_view
         self._target_paths: tuple[str, ...] = ()
         if target_view is not None:
-            tv_path = target_view().path
+            tv_path = mutobj.field_info(target_view.path).make_default()
             self._target_paths = (tv_path,) if isinstance(tv_path, str) else tuple(tv_path)
 
     def _match_view(self, promptset: MCPPromptSet) -> bool:
