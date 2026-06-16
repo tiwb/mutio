@@ -11,7 +11,7 @@ from typing import Any, cast
 import mutobj
 
 from mutio.codec.json import JsonObject, JsonValue
-from mutio.net.server import Request, Response
+from mutio.net.server import Request, Response, StreamingResponse
 from mutio.mcp.toolset import MCPToolSet
 from mutio.mcp.promptset import MCPPromptSet
 from mutio.mcp.view import MCPView
@@ -405,7 +405,7 @@ async def _send_empty_response(status: int) -> Response:
 
 
 @mutobj.impl(MCPView.post)
-async def mcp_view_post(self: MCPView, request: Request) -> Response:
+async def mcp_view_post(self: MCPView, request: Request) -> Response | StreamingResponse:
     ext = _get_ext(self)
     assert ext.dispatch is not None
 
@@ -494,5 +494,5 @@ def mcp_view_extra_capabilities(self: MCPView) -> JsonObject:
 
 
 @mutobj.impl(MCPView.register_extra_methods)
-def mcp_view_register_extra_methods(self: MCPView, dispatch: Any) -> None:
+def mcp_view_register_extra_methods(self: MCPView, dispatch: JsonRpcDispatcher) -> None:
     return None

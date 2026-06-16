@@ -62,5 +62,3 @@ include = ["src", "tests/test_codec_json.py"]
 extraPaths = ["src"]
 enableExperimentalFeatures = true
 
-[tool.mutobj-lint]
-include = ["src"]
