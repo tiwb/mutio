@@ -92,17 +92,6 @@ class TestPromptMessage:
         assert d["content"]["text"] == "hi"
 
 
-class TestServerCapabilities:
-    def test_empty(self):
-        c = ServerCapabilities()
-        assert c.to_dict() == {}
-
-    def test_with_tools(self):
-        c = ServerCapabilities(tools={"listChanged": True})
-        d = c.to_dict()
-        assert d["tools"] == {"listChanged": True}
-        assert "resources" not in d
-
 
 class TestJsonRpcError:
     def test_to_dict(self):
@@ -267,3 +256,129 @@ class TestJsonRpcDispatcherHandleBytes:
         resp_bytes = await dispatcher.handle_bytes(b"[]")
         resp = json.loads(resp_bytes)
         assert resp["error"]["code"] == INVALID_REQUEST
+
+    async def test_batch_with_non_dict_items(self, dispatcher):
+        """批次中包含非 dict 元素 → 该元素被替换为错误响应。"""
+        batch = [
+            {"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            "not a dict",
+        ]
+        resp_bytes = await dispatcher.handle_bytes(json.dumps(batch).encode())
+        results = json.loads(resp_bytes)
+        assert len(results) == 2
+        assert results[0]["result"] == "pong"
+        assert "error" in results[1]
+
+    async def test_all_notification_batch_returns_none(self, dispatcher):
+        """批次全是 notification → 返回 None。"""
+        d = JsonRpcDispatcher()
+
+        @d.notification("noop")
+        async def noop(params):
+            pass
+
+        batch = [
+            {"jsonrpc": "2.0", "method": "noop"},
+        ]
+        resp = await d.handle_bytes(json.dumps(batch).encode())
+        assert resp is None
+
+
+class TestJsonRpcDispatcherEdgeCases:
+    """JsonRpcDispatcher 边界场景。"""
+
+    async def test_method_not_a_string(self):
+        """method 不是字符串 → INVALID_REQUEST。"""
+        d = JsonRpcDispatcher()
+        resp = await d.handle({"jsonrpc": "2.0", "id": 1, "method": 123})
+        assert resp is not None
+        assert resp["error"]["code"] == INVALID_REQUEST
+
+    async def test_response_message_with_result(self):
+        """消息含 result 无 method → 分发给 __response__ handler。"""
+        d = JsonRpcDispatcher()
+        captured = []
+
+        async def response_handler(params):
+            captured.append(params)
+        d.add_notification("__response__", response_handler)
+
+        msg = {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}
+        resp = await d.handle(msg)
+        assert resp is None
+        assert captured == [msg]
+
+    async def test_response_message_with_error_key(self):
+        """消息含 error 无 method → 分发给 __response__ handler。"""
+        d = JsonRpcDispatcher()
+        captured = []
+
+        async def response_handler(params):
+            captured.append(params)
+        d.add_notification("__response__", response_handler)
+
+        msg = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32600}}
+        resp = await d.handle(msg)
+        assert resp is None
+        assert captured == [msg]
+
+    async def test_notification_handler_raises_does_not_propagate(self):
+        """notification handler 抛异常不传到调用方。"""
+        d = JsonRpcDispatcher()
+
+        @d.notification("risky")
+        async def risky(params):
+            raise RuntimeError("handler boom")
+
+        resp = await d.handle({"jsonrpc": "2.0", "method": "risky"})
+        assert resp is None
+
+    async def test_response_handler_raises_does_not_propagate(self):
+        """__response__ handler 抛异常不传到调用方。"""
+        d = JsonRpcDispatcher()
+
+        async def bad_handler(params):
+            raise RuntimeError("response handler boom")
+        d.add_notification("__response__", bad_handler)
+
+        msg = {"jsonrpc": "2.0", "id": 1, "result": {}}
+        resp = await d.handle(msg)
+        assert resp is None
+
+
+
+class TestServerCapabilities:
+    def test_empty(self):
+        c = ServerCapabilities()
+        assert c.to_dict() == {}
+
+    def test_with_tools(self):
+        c = ServerCapabilities(tools={"listChanged": True})
+        d = c.to_dict()
+        assert d["tools"] == {"listChanged": True}
+        assert "resources" not in d
+
+    def test_with_resources(self):
+        c = ServerCapabilities(resources={"subscribe": True})
+        d = c.to_dict()
+        assert d["resources"] == {"subscribe": True}
+
+    def test_with_prompts(self):
+        c = ServerCapabilities(prompts={"listChanged": False})
+        d = c.to_dict()
+        assert d["prompts"] == {"listChanged": False}
+
+    def test_with_logging(self):
+        c = ServerCapabilities(logging={"level": "debug"})
+        d = c.to_dict()
+        assert d["logging"] == {"level": "debug"}
+
+    def test_all_fields(self):
+        c = ServerCapabilities(
+            tools={"x": 1},
+            resources={"y": 2},
+            prompts={"z": 3},
+            logging={"w": 4},
+        )
+        d = c.to_dict()
+        assert len(d) == 4

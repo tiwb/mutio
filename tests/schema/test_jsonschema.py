@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import typing
 from typing import Any, Literal, Optional, Union
 
 import pytest
@@ -115,6 +116,12 @@ class TestContainers:
     def test_bare_dict(self):
         assert annotation_to_json_schema(dict) == {"type": "object"}
 
+    def test_typing_list_no_args(self):
+        assert annotation_to_json_schema(typing.List) == {"type": "array"}
+
+    def test_typing_dict_no_args(self):
+        assert annotation_to_json_schema(typing.Dict) == {"type": "object"}
+
 
 # ---------------------------------------------------------------------------
 # Optional / T | None
@@ -134,6 +141,11 @@ class TestOptional:
         result = annotation_to_json_schema(Optional[list[int]])
         assert result["type"] == ["array", "null"]
         assert result["items"] == {"type": "integer"}
+
+    def test_optional_any(self):
+        """Optional[Any] — Any 无 type，_add_null_type 追加 "null"。"""
+        result = annotation_to_json_schema(Optional[Any])
+        assert result == {"type": "null"}
 
 
 # ---------------------------------------------------------------------------

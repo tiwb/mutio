@@ -1,9 +1,6 @@
-"""测试 MCPView 的 extra_capabilities / register_extra_methods 扩展钩子。
+"""测试 MCPView 的 extra_capabilities / register_extra_methods 扩展钩子（L1）。
 
-验证：
-- 子类可通过覆盖钩子向 initialize 响应注入 vendor capability
-- 子类可通过覆盖钩子注册扩展 JSON-RPC 方法到 dispatcher
-- 默认实现不破坏现有行为（capability 不出现意外字段；dispatch 无意外路由）
+全部通过 initialize / 自定义方法 JSON-RPC 调用验证，不访问内部状态。
 """
 
 import asyncio

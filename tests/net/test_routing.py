@@ -10,7 +10,7 @@ import pytest
 
 from mutio.net.server import (
     Server, View, WebSocketView, WebSocketConnection,
-    Request, Response,
+    Request, Response, StaticView, StreamingResponse,
 )
 
 
@@ -291,3 +291,168 @@ class TestMultiPathBypassesRedirect:
         assert cap_no_slash.headers["location"] == "/auth-like/login"
         assert cap_slash.status == 302
         assert cap_slash.headers["location"] == "/auth-like/login"
+
+
+# ---------------------------------------------------------------------------
+# HTTP 方法未实现 + handler 异常
+# ---------------------------------------------------------------------------
+
+
+class _OnlyGetView(View):
+    """只有 GET，没有 POST/PUT/DELETE。"""
+    path = "/onlyget"
+
+    async def get(self, request: Request) -> Response:
+        return Response(status_code=200, body=b"ok")
+
+
+class _CrashingView(View):
+    """GET 抛异常。"""
+    path = "/crash"
+
+    async def get(self, request: Request) -> Response:
+        raise RuntimeError("boom")
+
+
+class TestMethodNotAllowed:
+    """未实现的 HTTP 方法返回 405。"""
+
+    @pytest.mark.asyncio
+    async def test_delete_returns_405(self):
+        server = Server(views=(_OnlyGetView,))
+        cap = await _call_http(server, "DELETE", "/onlyget")
+        assert cap.status == 405
+
+
+class TestHandlerException:
+    """View handler 抛异常时返回 500 JSON。"""
+
+    @pytest.mark.asyncio
+    async def test_handler_exception_returns_500(self):
+        server = Server(views=(_CrashingView,))
+        cap = await _call_http(server, "GET", "/crash")
+        assert cap.status == 500
+        assert b"Internal Server Error" in cap.body
+
+
+# ---------------------------------------------------------------------------
+# before_route
+# ---------------------------------------------------------------------------
+
+
+class _StreamingInterceptServer(Server):
+    """before_route 在指定路径返回 StreamingResponse，短路正常路由。"""
+
+    async def before_route(self, scope: dict[str, Any], path: str) -> Response | StreamingResponse | None:
+        if path == "/intercepted":
+            async def _stream():
+                yield b"chunk1"
+                yield b"chunk2"
+            return StreamingResponse(
+                body_iterator=_stream().__aiter__(),
+                media_type="text/plain",
+            )
+        return None
+
+
+class TestBeforeRouteStreaming:
+    """before_route 返回 StreamingResponse 时走流式发送。"""
+
+    @pytest.mark.asyncio
+    async def test_before_route_returns_streaming_response(self):
+        server = _StreamingInterceptServer(views=(_OnlyGetView,))
+        cap = await _call_http(server, "GET", "/intercepted")
+        assert cap.status == 200
+        assert b"chunk1" in cap.body
+        assert b"chunk2" in cap.body
+
+
+# ---------------------------------------------------------------------------
+# base_path 不匹配
+# ---------------------------------------------------------------------------
+
+
+class TestBasePathMismatch:
+    """base_path 不匹配的请求返回 404（HTTP）或 4404（WebSocket）。"""
+
+    @pytest.mark.asyncio
+    async def test_path_outside_base_path_returns_404(self):
+        server = Server(base_path="/api", views=(_ProbeView,))
+        cap = await _call_http(server, "GET", "/other")
+        assert cap.status == 404
+
+    @pytest.mark.asyncio
+    async def test_websocket_outside_base_path_returns_4404(self):
+        server = Server(base_path="/api", views=(_WSEcho,))
+        cap = await _call_ws(server, "/other")
+        assert any(
+            m.get("type") == "websocket.close" and m.get("code") == 4404
+            for m in cap.ws_messages
+        )
+
+
+# ---------------------------------------------------------------------------
+# StaticView 静态文件服务（通过 _call_http 驱动 Server.route）
+# ---------------------------------------------------------------------------
+
+from pathlib import Path
+
+
+class TestStaticView:
+    """StaticView 的路径解析与文件返回。"""
+
+    @pytest.mark.asyncio
+    async def test_file_served(self, tmp_path: Path):
+        """请求存在的文件 → 200 + 文件内容。"""
+        file_path = tmp_path / "hello.txt"
+        file_path.write_text("hello static")
+
+        sv = type("_StaticFile", (StaticView,), {"path": "/s", "directory": str(tmp_path)})
+        server = Server(views=(sv,))
+        cap = await _call_http(server, "GET", "/s/hello.txt")
+        assert cap.status == 200
+        assert cap.body == b"hello static"
+
+    @pytest.mark.asyncio
+    async def test_file_not_found_returns_404(self, tmp_path: Path):
+        """请求不存在的文件 → 404。"""
+        sv = type("_StaticMissing", (StaticView,), {"path": "/s", "directory": str(tmp_path)})
+        server = Server(views=(sv,))
+        cap = await _call_http(server, "GET", "/s/nonexistent.txt")
+        assert cap.status == 404
+
+    @pytest.mark.asyncio
+    async def test_directory_serves_index_html(self, tmp_path: Path):
+        """请求目录路径 → 返回 index.html。"""
+        index = tmp_path / "index.html"
+        index.write_text("<h1>index</h1>")
+
+        sv = type("_StaticDir", (StaticView,), {"path": "/s", "directory": str(tmp_path)})
+        server = Server(views=(sv,))
+        cap = await _call_http(server, "GET", "/s/")
+        assert cap.status == 200
+        assert b"<h1>index</h1>" in cap.body
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_returns_404(self, tmp_path: Path):
+        """路径穿越 → 404（static_dirs fallback 跳过不安全的路径）。"""
+        subdir = tmp_path / "sub"
+        subdir.mkdir()
+        (subdir / "safe.txt").write_text("safe")
+        # 在 subdir 外放一个文件，尝试用 .. 逃逸
+        (tmp_path / "secret.txt").write_text("secret")
+
+        sv = type("_StaticSafe", (StaticView,), {"path": "/s", "directory": str(subdir)})
+        server = Server(views=(sv,))
+        cap = await _call_http(server, "GET", "/s/../secret.txt")
+        # static_dirs 的路径穿越检测用 resolve() 比对前缀，不匹配则 continue
+        # → 最终返回 404
+        assert cap.status == 404
+
+    @pytest.mark.asyncio
+    async def test_no_directory_returns_404(self):
+        """directory 为空字符串 → _discover_routes 不注册该 static_dir → 404。"""
+        sv = type("_StaticNoDir", (StaticView,), {"path": "/nodir", "directory": ""})
+        server = Server(views=(sv,))
+        cap = await _call_http(server, "GET", "/nodir/anything")
+        assert cap.status == 404

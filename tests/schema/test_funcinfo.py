@@ -194,3 +194,22 @@ class TestAnyType:
         info = extract_function_info(f)
         assert info.params["x"].annotation is Any
         assert info.params["x"].has_annotation is True
+
+
+# ---------------------------------------------------------------------------
+# get_type_hints 失败 → 回退到 inspect 注解
+# ---------------------------------------------------------------------------
+
+
+class TestGetTypeHintsFallback:
+    def test_unresolvable_forward_ref_falls_back(self):
+        """get_type_hints 对无法解析的字符串注解抛异常时，回退到 param.annotation。"""
+        # 使用 eval 动态创建函数，避免 pyright 报告类型错误
+        ns: dict[str, Any] = {}
+        exec("def f(x: 'NoSuchType4711') -> None: ...", ns)
+        f = ns["f"]
+        info = extract_function_info(f)
+        # 不崩，参数存在
+        assert "x" in info.params
+        # annotation 取自 inspect（字符串），非 None
+        assert info.params["x"].has_annotation is True

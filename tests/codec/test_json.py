@@ -415,127 +415,6 @@ class TestNarrowValue:
         assert narrow_value(None, str | None) is None
 
 
-class TestPyrightTypeInference:
-    def test_primitive_inference(self):
-        raw: JsonValue = {"model": "gpt-4", "count": 3}
-        assert_type(get_field(raw, "model", str), str)
-        assert_type(get_field(raw, "model", str, default=None), str | None)
-        assert_type(get_field(raw, "model", str, fallback=None), str | None)
-        assert_type(get_element(["x"], 0, str), str)
-        assert_type(get_element(["x"], 0, str, default=None), str | None)
-        assert_type(narrow_value("x", str), str)
-        assert_type(narrow_value("x", str, fallback=None), str | None)
-
-    def test_generic_inference_from_typed_defaults(self):
-        raw: JsonValue = {"meta": {"id": "x"}, "names": ["a", "b"]}
-        default_obj: JsonObject = {}
-        default_names: list[str] = []
-        fallback_obj: JsonObject = {}
-        assert_type(get_field(raw, "meta", JsonObject, default=default_obj), JsonObject)
-        assert_type(get_field(raw, "names", list[str], default=default_names), list[str])
-        assert_type(get_element(raw, 0, JsonObject, default=default_obj), JsonObject)
-        assert_type(narrow_value(raw, JsonObject, fallback=fallback_obj), JsonObject)
-
-    def test_generic_alias_with_untyped_fallback(self):
-        """GenericAlias（JsonObject/list[int]）+ 无类型 fallback 应正确推断 T | TFallback。
-
-        pyright 1.1.410 已将 GenericAlias 视为匹配 ``type[T]``，推断正确。
-        本测试起回归作用，确保未来版本不会退化。
-        """
-        raw: JsonValue = {"meta": {"id": "x"}, "items": [1, 2], "count": 3}
-        # get_element 的 fallback 只覆盖"元素类型不匹配"，非 list 走 default。
-        # 所以 get_element 测试用 arr 而非 raw（dict）。
-        arr: JsonValue = [1, "two", 3]
-        empty_obj: JsonObject = {}
-        empty_list: list[int] = []
-
-        # JsonObject + untyped None fallback
-        assert_type(
-            get_field(raw, "meta", JsonObject, fallback=None),
-            JsonObject | None,
-        )
-        assert_type(
-            get_field(raw, "meta", JsonObject, default=empty_obj, fallback=None),
-            JsonObject | None,
-        )
-        assert_type(
-            narrow_value(raw, JsonObject, fallback=None),
-            JsonObject | None,
-        )
-        assert_type(
-            get_element(arr, 0, JsonObject, fallback=None),
-            JsonObject | None,
-        )
-
-        # list[int] + untyped None fallback
-        assert_type(
-            get_field(raw, "items", list[int], fallback=None),
-            list[int] | None,
-        )
-        assert_type(
-            get_field(raw, "items", list[int], default=empty_list, fallback=None),
-            list[int] | None,
-        )
-        assert_type(
-            narrow_value(raw, list[int], fallback=None),
-            list[int] | None,
-        )
-        assert_type(
-            get_element(arr, 0, list[int], fallback=None),
-            list[int] | None,
-        )
-
-        # JsonArray + untyped None fallback
-        assert_type(
-            narrow_value(raw, json.JsonArray, fallback=None),
-            json.JsonArray | None,
-        )
-
-        # 不带 fallback 的 GenericAlias 也应正确推断
-        assert_type(
-            get_field(raw, "meta", JsonObject),
-            JsonObject,
-        )
-        assert_type(
-            narrow_value(raw, JsonObject),
-            JsonObject,
-        )
-        assert_type(
-            get_field(raw, "items", list[int]),
-            list[int],
-        )
-
-    def test_untyped_empty_list_default_regression(self):
-        """`default=[]` with GenericAlias infers `list[Unknown]` (known limitation).
-
-        调用 ``get_field(data, "items", list[JsonObject], default=[])`` 时，
-        pyright 将 ``default=[]`` 推断为 ``list[Unknown]``。原因：``TDefault``
-        独立于 ``T``，``[]`` 无元素类型可供推导。
-
-        当前 workaround：``default=list[JsonObject]()`` 或用类型变量。
-
-        预期修复：pyright 完整支持 PEP 747 ``TypeForm[T]``（含 ``UnionType``）后，
-        ``default`` 可与 ``typ`` 共享 ``T`` 约束，届时取消下方注释验证。
-        """
-        raw: JsonValue = {"items": [{"a": 1}], "names": ["x", "y"]}
-
-        # 当前触发 reportUnknownArgumentType——保留待 pyright 完整支持
-        # PEP 747 TypeForm[T]（含 UnionType）后，default 可共享 T 约束，
-        # [] 被上下文类型化为 list[JsonObject]，届时取消注释：
-        # result = get_field(raw, "items", list[JsonObject], default=[])
-        # assert result == [{"a": 1}]
-
-        # Workaround A：显式类型构造
-        result2 = get_field(raw, "items", list[JsonObject],
-                            default=list[JsonObject]())
-        assert result2 == [{"a": 1}]
-
-        # Workaround B：类型变量（现有测试已覆盖的模式）
-        default_names: list[str] = []
-        names = get_field(raw, "names", list[str], default=default_names)
-        assert names == ["x", "y"]
-
-
 # ============================================================================
 # default=[] / default={} 在不同上下文中的推断一致性
 # ============================================================================
@@ -663,3 +542,39 @@ def test_return_fails_module_access():
 
     result = _return_list_from_module(data)
     assert result == [{"b": 2}]
+
+
+# ---------------------------------------------------------------------------
+# check_type 边界场景
+# ---------------------------------------------------------------------------
+
+
+class TestCheckTypeEdgeCases:
+    """check_type 的覆盖边界：float-int 兼容、泛型 origin 路径。"""
+
+    def test_int_compatible_with_float(self):
+        """JSON round-trip 兼容：int 值可赋给 float 字段。"""
+        assert check_type(0, float) is True
+        assert check_type(42, float) is True
+        assert check_type(-1, float) is True
+
+    def test_float_not_compatible_with_int(self):
+        """逆向：float 不能赋给 int。"""
+        assert check_type(3.14, int) is False
+
+    def test_generic_origin_with_args(self):
+        """泛型类型（如 Tuple[int, ...]）走 isinstance(origin) 路径。
+
+        注意：当前实现仅对 list/dict 做递归元素检查，其他泛型（tuple 等）
+        只检查 isinstance(value, origin)，不深入验证元素类型。
+        """
+        import typing
+        # 通过了 isinstance 检查（是 tuple）→ True
+        assert check_type((1, 2), typing.Tuple[int, ...]) is True
+        # 不是 tuple → False
+        assert check_type([1, 2], typing.Tuple[int, ...]) is False
+
+    def test_generic_origin_no_args(self):
+        """无 type args 的泛型（如 bare list）。"""
+        assert check_type([1, 2], list) is True
+        assert check_type("not list", list) is False

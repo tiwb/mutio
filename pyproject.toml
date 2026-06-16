@@ -51,6 +51,20 @@ mutio = ["py.typed"]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+markers = [
+    "l2(contract): L2 契约测试，验证内部状态机 / 失效时机 / 回退路径",
+]
+
+[tool.coverage.run]
+source = ["src/mutio"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.coverage.json]
+show_contexts = true
 
 [tool.uv.sources]
 mutobj = { path = "../mutobj", editable = true }
@@ -58,7 +72,7 @@ mutobj = { path = "../mutobj", editable = true }
 [tool.pyright]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
-include = ["src", "tests/test_codec_json.py"]
+include = ["src", "tests/codec/test_json_typecheck.py"]
 extraPaths = ["src"]
 enableExperimentalFeatures = true
 

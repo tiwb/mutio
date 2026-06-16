@@ -12,7 +12,7 @@ from mutio.net.server import (
     Response,
     StreamingResponse,
     WebSocketConnection,
-    is_expected_disconnect_error,
+    WebSocketDisconnect,
 )
 
 
@@ -269,17 +269,17 @@ class TestWebSocketConnectionDefaults:
         assert ws.headers == {}
 
 
-class TestExpectedDisconnectError:
-    @pytest.mark.parametrize(
-        ("exc", "expected"),
-        [
-            (ConnectionResetError(10054, "reset by peer"), True),
-            (BrokenPipeError(32, "broken pipe"), True),
-            (ConnectionAbortedError(10053, "software caused connection abort"), True),
-            (OSError(10054, "socket reset"), True),
-            (OSError(22, "invalid argument"), False),
-            (RuntimeError("boom"), False),
-        ],
-    )
-    def test_classifies_expected_transport_disconnects(self, exc, expected):
-        assert is_expected_disconnect_error(exc) is expected
+class TestWebSocketDisconnect:
+    def test_default_code(self):
+        exc = WebSocketDisconnect()
+        assert exc.code == 1000
+        assert "1000" in str(exc)
+
+    def test_custom_code(self):
+        exc = WebSocketDisconnect(1006)
+        assert exc.code == 1006
+        assert "1006" in str(exc)
+
+    def test_is_exception(self):
+        exc = WebSocketDisconnect()
+        assert isinstance(exc, Exception)

@@ -9,3 +9,7 @@ build/
 *.egg
 .mypy_cache/
 .pytest_cache/
+
+# Coverage
+.coverage
+coverage.json
