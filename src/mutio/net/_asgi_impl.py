@@ -8,13 +8,14 @@ import os
 import signal
 import socket as _socket
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import mutobj
 
 from mutio.net.asgi import ASGIServer
-from mutio.net._protocol import HTTPProtocol
-from mutio.net.server import is_expected_disconnect_error
+
+if TYPE_CHECKING:
+    from mutio.net._protocol import HTTPProtocol
 
 logger = logging.getLogger("mutio.net.server")
 
@@ -55,6 +56,7 @@ def _install_asyncio_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
         current_loop: asyncio.AbstractEventLoop,
         context: dict[str, Any],
     ) -> None:
+        from mutio.net._protocol import is_expected_disconnect_error
         exception = context.get("exception")
         message = context.get("message", "Unhandled exception in asyncio callback")
         if exception and is_expected_disconnect_error(exception):
@@ -251,6 +253,7 @@ async def _startup(
     _install_asyncio_exception_handler(loop)
 
     def _create_protocol() -> HTTPProtocol:
+        from mutio.net._protocol import HTTPProtocol
         return HTTPProtocol(
             ext.app,
             server_state=ext.server_state,

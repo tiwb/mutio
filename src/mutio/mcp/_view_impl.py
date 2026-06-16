@@ -25,7 +25,6 @@ from mutio.mcp.protocol import (
     ToolResult,
 )
 from mutio.mcp._schema import function_to_mcp_input_schema, function_to_mcp_description
-from mutio.net._protocol import format_sse
 
 logger = logging.getLogger("mutio.mcp")
 
@@ -400,6 +399,20 @@ async def _send_json_response(
     return Response(status_code=status, body=body, headers=headers)
 
 
+def _format_sse(data: str, event: str | None = None, id: str | None = None) -> bytes:
+    """格式化单条 SSE 消息。"""
+    lines: list[str] = []
+    if id is not None:
+        lines.append(f"id: {id}")
+    if event is not None:
+        lines.append(f"event: {event}")
+    for line in data.split("\n"):
+        lines.append(f"data: {line}")
+    lines.append("")
+    lines.append("")
+    return "\n".join(lines).encode("utf-8")
+
+
 async def _send_empty_response(status: int) -> Response:
     return Response(status_code=status, headers={"content-length": "0"})
 
@@ -460,7 +473,7 @@ async def mcp_view_post(self: MCPView, request: Request) -> Response | Streaming
     accept = request.headers.get("accept", "")
 
     if "text/event-stream" in accept:
-        sse_data = format_sse(json.dumps(result_data), event="message")
+        sse_data = _format_sse(json.dumps(result_data), event="message")
         headers = {
             "content-type": "text/event-stream",
             "cache-control": "no-cache",

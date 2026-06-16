@@ -11,28 +11,28 @@ from urllib.parse import unquote
 import h11
 import wsproto
 import wsproto.events as ws_events
-from mutio.net.server import WebSocketDisconnect, is_expected_disconnect_error
+from mutio.net.server import WebSocketDisconnect
 
 logger = logging.getLogger("mutio.net.protocol")
 access_logger = logging.getLogger("mutio.net.access")
 
 # ---------------------------------------------------------------------------
-# SSE
+# 预期断连异常判定
 # ---------------------------------------------------------------------------
 
+_EXPECTED_DISCONNECT_ERRNOS = {32, 54, 104}
+_EXPECTED_DISCONNECT_WINERRORS = {64, 10053, 10054}
 
-def format_sse(data: str, event: str | None = None, id: str | None = None) -> bytes:
-    """格式化单条 SSE 消息。"""
-    lines: list[str] = []
-    if id is not None:
-        lines.append(f"id: {id}")
-    if event is not None:
-        lines.append(f"event: {event}")
-    for line in data.split("\n"):
-        lines.append(f"data: {line}")
-    lines.append("")
-    lines.append("")
-    return "\n".join(lines).encode("utf-8")
+
+def is_expected_disconnect_error(exc: BaseException) -> bool:
+    """判断是否为底层 transport 的预期断连异常。"""
+    if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+        return True
+    if not isinstance(exc, OSError):
+        return False
+    if exc.errno in _EXPECTED_DISCONNECT_ERRNOS:
+        return True
+    return getattr(exc, "winerror", None) in _EXPECTED_DISCONNECT_WINERRORS
 
 
 # ---------------------------------------------------------------------------

@@ -125,21 +125,6 @@ class WebSocketDisconnect(Exception):
         super().__init__(f"WebSocket disconnected (code={code})")
 
 
-_EXPECTED_DISCONNECT_ERRNOS = {32, 54, 104}
-_EXPECTED_DISCONNECT_WINERRORS = {64, 10053, 10054}
-
-
-def is_expected_disconnect_error(exc: BaseException) -> bool:
-    """判断是否为底层 transport 的预期断连异常。"""
-    if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
-        return True
-    if not isinstance(exc, OSError):
-        return False
-    if exc.errno in _EXPECTED_DISCONNECT_ERRNOS:
-        return True
-    return getattr(exc, "winerror", None) in _EXPECTED_DISCONNECT_WINERRORS
-
-
 class WebSocketConnection(mutobj.Declaration):
     """WebSocket 连接。
 
