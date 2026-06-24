@@ -342,3 +342,109 @@ class TestWebSocketClientEdgeCases:
         ws = WebSocketClient(url="ws://127.0.0.1:1/ws")
         await ws.close()
         await ws.close()
+
+
+# ---------------------------------------------------------------------------
+# 大消息分片测试（wsproto 自动分片 → 客户端正确拼合）
+# ---------------------------------------------------------------------------
+
+
+class LargeTextEchoWS(WebSocketView):
+    """接收一条文本消息后，原样 echo 回客户端。"""
+    path = "/ws-large-text"
+
+    async def connect(self, ws: WebSocketConnection) -> None:
+        await ws.receive()  # connect
+        await ws.accept()
+
+        msg = await ws.receive()
+        if "text" in msg:
+            await ws.send_json(msg["text"])
+        await ws.close()
+
+
+class LargeTextDirectWS(WebSocketView):
+    """连接后直接发送一条大文本消息给客户端（通过 send_json）。"""
+    path = "/ws-large-direct"
+
+    async def connect(self, ws: WebSocketConnection) -> None:
+        await ws.receive()  # websocket.connect
+        await ws.accept()
+        # send_json 会 JSON 包裹（加引号转义），内容体积足够触发分片
+        payload = "A" * 80000 + "TAIL"
+        await ws.send_json(payload)
+        await ws.close()
+
+
+class TestWebSocketFragmentation:
+    """大消息触发 wsproto 自动分片，客户端 receive_text/bytes 正确拼合。"""
+
+    @pytest.mark.asyncio
+    async def test_large_text_echo(self, free_port):
+        """客户端发大文本 → 服务端 echo（JSON 包裹）→ 客户端收到完整回包。"""
+        sock, port = free_port
+        server = Server(views=(LargeTextEchoWS,))
+        await start_server(server, sock)
+
+        payload = "你好" * 30000 + "END"  # ~90KB，触发分片
+
+        ws = WebSocketClient(url=f"ws://127.0.0.1:{port}/ws-large-text")
+        await ws.connect()
+        await ws.send_text(payload)
+        reply = await ws.receive_text()
+        await ws.close()
+        await server.stop()
+
+        # send_json 套了 JSON 引号，内容完整
+        assert payload in reply
+
+    @pytest.mark.asyncio
+    async def test_large_text_direct(self, free_port):
+        """服务端通过 send_json 发 ~80KB（触发 wsproto 分片）→ 客户端完整接收。"""
+        sock, port = free_port
+        server = Server(views=(LargeTextDirectWS,))
+        await start_server(server, sock)
+
+        ws = WebSocketClient(url=f"ws://127.0.0.1:{port}/ws-large-direct")
+        await ws.connect()
+        reply = await ws.receive_text()
+        await ws.close()
+        await server.stop()
+
+        # send_json 包裹在 JSON 字符串中："..."
+        assert len(reply) >= 80000 + 4
+        assert "TAIL" in reply
+
+    @pytest.mark.asyncio
+    async def test_large_binary_fragmentation(self, free_port):
+        """~100KB 二进制 echo → 分片拼合正确。"""
+        sock, port = free_port
+        server = Server(views=(BinaryEchoWS,))
+        await start_server(server, sock)
+
+        data = bytes(range(256)) * 400 + b"\x00\x01\x02"  # ~100KB
+
+        ws = WebSocketClient(url=f"ws://127.0.0.1:{port}/ws-bin")
+        await ws.connect()
+        await ws.send_bytes(data)
+        reply = await ws.receive_bytes()
+        await ws.close()
+        await server.stop()
+
+        assert reply == data
+
+    @pytest.mark.asyncio
+    async def test_normal_sized_message_still_works(self, free_port):
+        """小消息不受分片逻辑影响，行为不变。"""
+        sock, port = free_port
+        server = Server(views=(EchoWS,))
+        await start_server(server, sock)
+
+        ws = WebSocketClient(url=f"ws://127.0.0.1:{port}/ws")
+        await ws.connect()
+        await ws.send_text("hello")
+        msg = await ws.receive_text()
+        await ws.close()
+        await server.stop()
+
+        assert '"hello"' in msg

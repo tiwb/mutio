@@ -36,6 +36,43 @@ def is_expected_disconnect_error(exc: BaseException) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# WebSocket 消息分片拼合（服务端/客户端共用，wsproto 不分角色）
+# ---------------------------------------------------------------------------
+
+
+class WSMessageAccumulator:
+    """WebSocket 消息分片拼合器。
+
+    wsproto 对大消息自动拆成多个 frame，每个 frame 触发一次
+    TextMessage/BytesMessage 事件，只有最后一帧 message_finished=True。
+    本类累积片段直到消息完整，供服务端 (WSProtocol) 和客户端
+    (_ws_receive) 共用，保证分片处理逻辑只有一份。
+    """
+
+    def __init__(self) -> None:
+        self._text: list[str] = []
+        self._bytes: list[bytes] = []
+
+    def feed_text(self, event: ws_events.TextMessage) -> str | None:
+        """喂入一个文本帧。消息完整时返回完整字符串，否则返回 None。"""
+        self._text.append(event.data)
+        if event.message_finished:
+            result = "".join(self._text)
+            self._text.clear()
+            return result
+        return None
+
+    def feed_bytes(self, event: ws_events.BytesMessage) -> bytes | None:
+        """喂入一个二进制帧。消息完整时返回完整 bytes，否则返回 None。"""
+        self._bytes.append(bytes(event.data))
+        if event.message_finished:
+            result = b"".join(self._bytes)
+            self._bytes.clear()
+            return result
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Flow Control
 # ---------------------------------------------------------------------------
 
@@ -594,8 +631,7 @@ class WSProtocol(asyncio.Protocol):
         self._handshake_complete = False
         self._closed = False
         self._close_sent = False
-        self._text_buffer: list[str] = []
-        self._bytes_buffer: list[bytes] = []
+        self._messages: WSMessageAccumulator = WSMessageAccumulator()
 
     # --- asyncio.Protocol callbacks ---
 
@@ -642,17 +678,13 @@ class WSProtocol(asyncio.Protocol):
         self.task = loop.create_task(self._run_asgi())
 
     def _handle_text(self, event: ws_events.TextMessage) -> None:
-        self._text_buffer.append(event.data)
-        if event.message_finished:
-            text = "".join(self._text_buffer)
-            self._text_buffer.clear()
+        text = self._messages.feed_text(event)
+        if text is not None:
             self._enqueue({"type": "websocket.receive", "text": text})
 
     def _handle_bytes(self, event: ws_events.BytesMessage) -> None:
-        self._bytes_buffer.append(bytes(event.data))
-        if event.message_finished:
-            data = b"".join(self._bytes_buffer)
-            self._bytes_buffer.clear()
+        data = self._messages.feed_bytes(event)
+        if data is not None:
             self._enqueue({"type": "websocket.receive", "bytes": data})
 
     def _handle_close(self, event: ws_events.CloseConnection) -> None:

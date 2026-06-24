@@ -14,6 +14,7 @@ import mutobj
 
 from mutio.net.client import HttpClient, WebSocketClient
 from mutio.net.server import WebSocketDisconnect
+from mutio.net._protocol import WSMessageAccumulator
 
 _default_user_agent = ""
 
@@ -143,22 +144,27 @@ async def web_socket_client_receive_bytes(self: WebSocketClient) -> bytes:
 
 
 async def _ws_receive(ext: _WSCLientExt, expected: type) -> Any:
-    """轮询 wsproto 事件直到收到匹配类型的消息。"""
+    """轮询 wsproto 事件直到收到一条完整消息（分片由 WSMessageAccumulator 处理）。"""
     assert ext.ws is not None
+    acc = WSMessageAccumulator()
     while True:
         for event in ext.ws.events():
             if isinstance(event, ws_events.TextMessage):
-                if expected is str:
-                    return event.data
-                raise TypeError(
-                    f"Expected bytes message, got text: {event.data!r}"
-                )
+                if expected is not str:
+                    raise TypeError(
+                        f"Expected bytes message, got text: {event.data!r}"
+                    )
+                result = acc.feed_text(event)
+                if result is not None:
+                    return result
             if isinstance(event, ws_events.BytesMessage):
-                if expected is bytes:
-                    return event.data
-                raise TypeError(
-                    f"Expected text message, got bytes ({len(event.data)} bytes)"
-                )
+                if expected is not bytes:
+                    raise TypeError(
+                        f"Expected text message, got bytes ({len(event.data)} bytes)"
+                    )
+                result = acc.feed_bytes(event)
+                if result is not None:
+                    return result
             if isinstance(event, ws_events.CloseConnection):
                 raise WebSocketDisconnect(event.code)
             if isinstance(event, ws_events.Ping):
