@@ -76,7 +76,7 @@ async def mcp_client_list_tools(self: MCPClient) -> list[JsonObject]:
 @mutobj.impl(MCPClient.call_tool)
 async def mcp_client_call_tool(self: MCPClient, name: str, **arguments: Any) -> JsonObject:
     result = await _request(self, "tools/call", {"name": name, "arguments": arguments})
-    return result
+    return json.narrow_value(result, JsonObject)
 
 
 @mutobj.impl(MCPClient.list_resources)
@@ -88,7 +88,7 @@ async def mcp_client_list_resources(self: MCPClient) -> list[JsonObject]:
 @mutobj.impl(MCPClient.read_resource)
 async def mcp_client_read_resource(self: MCPClient, uri: str) -> JsonObject:
     result = await _request(self, "resources/read", {"uri": uri})
-    return result
+    return json.narrow_value(result, JsonObject)
 
 
 @mutobj.impl(MCPClient.list_prompts)
@@ -103,7 +103,7 @@ async def mcp_client_get_prompt(self: MCPClient, name: str, arguments: JsonObjec
     if arguments:
         params["arguments"] = arguments
     result = await _request(self, "prompts/get", params)
-    return result
+    return json.narrow_value(result, JsonObject)
 
 
 @mutobj.impl(MCPClient.ping)
@@ -116,7 +116,7 @@ async def mcp_client_request(
     self: MCPClient,
     method: str,
     params: JsonObject | None = None,
-) -> JsonObject:
+) -> JsonValue:
     return await _request(self, method, params)
 
 
@@ -153,7 +153,7 @@ def _next_id(client: MCPClient) -> int:
     return ext.request_id
 
 
-async def _request(client: MCPClient, method: str, params: JsonValue = None) -> JsonObject:
+async def _request(client: MCPClient, method: str, params: JsonValue = None) -> JsonValue:
     """发送 JSON-RPC request，返回 result。"""
     ext = _ext(client)
     assert ext.http is not None
@@ -194,7 +194,7 @@ async def _request(client: MCPClient, method: str, params: JsonValue = None) -> 
                 json.get_field(err, "message", str, default="Unknown error"),
                 err.get("data"),
             )
-        return json.get_field(data, "result", JsonObject)
+        return data["result"]
 
 
 async def _notify(client: MCPClient, method: str, params: JsonValue = None) -> None:
@@ -215,7 +215,7 @@ async def _notify(client: MCPClient, method: str, params: JsonValue = None) -> N
         logger.warning("Notification %s returned %d", method, resp.status_code)
 
 
-def _parse_sse_response(text: str, expected_id: int) -> JsonObject:
+def _parse_sse_response(text: str, expected_id: int) -> JsonValue:
     """解析 SSE 响应，提取 JSON-RPC result。"""
     for line in text.split("\n"):
         line = line.strip()
@@ -240,6 +240,6 @@ def _parse_sse_response(text: str, expected_id: int) -> JsonObject:
                         json.get_field(err, "message", str, default=""),
                         err.get("data"),
                     )
-                return json.get_field(item, "result", JsonObject)
+                return item["result"]
 
     raise MCPError(-1, "No response found in SSE stream")

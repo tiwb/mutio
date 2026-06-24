@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mutio.codec.json import JsonObject
+from mutio.codec.json import JsonObject, JsonValue
 
 import mutobj
 
@@ -46,7 +46,7 @@ class MCPClient(mutobj.Declaration):
         """调用 tool。返回 ``{"content": [...], "isError": bool}``。"""
         ...
 
-    async def request(self, method: str, params: JsonObject | None = None) -> JsonObject:
+    async def request(self, method: str, params: JsonObject | None = None) -> JsonValue:
         """通用 JSON-RPC 请求 — 直接转发到 server，返回 ``result`` 字段。
 
         服务端宣告自定义扩展方法时（如 ``pysandbox/namespaces.list``），
